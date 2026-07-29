@@ -81,6 +81,16 @@ func (pp PianoPanel) Render(b *element.Builder) (x any) {
 			b.Button("id", "piano-oct-down", "title", "Octave down (Z)").T("−"),
 			b.SpanClass("piano-oct", "id", "piano-oct").T("C4"),
 			b.Button("id", "piano-oct-up", "title", "Octave up (X)").T("+"),
+			// Web MIDI shell: device enumeration and permission live entirely
+			// in the browser, so the server can only render an empty select
+			// plus a status dot. app.js fills the list (and re-fills it on
+			// hot-plug), or hides the whole box where Web MIDI is unsupported.
+			b.SpanClass("midi-box", "id", "midi-box").R(
+				b.SpanClass("midi-dot", "id", "midi-dot", "title", "MIDI input status").T("●"),
+				b.Select("id", "midi-in", "title", "MIDI input device").R(
+					b.Option("value", "").T("MIDI: none"),
+				),
+			),
 			b.SpanClass("piano-hint").T("Play: A S D F … (W E T Y U for sharps) · Z/X octave · click or drag"),
 		),
 		b.DivClass("piano-keys", "id", "piano-keys").R(

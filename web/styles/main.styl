@@ -346,6 +346,20 @@ input.fader
   color inkDim
   font-size 10px
 
+// Web MIDI device picker in the piano header. The dot mirrors .conn-dot:
+// grey = no device, green = bound, red = browser denied MIDI access.
+.midi-box
+  display inline-flex
+  align-items center
+  gap 4px
+
+.midi-dot
+  color #555
+  &[data-live="1"]
+    color green
+  &[data-live="err"]
+    color #ff8d99
+
 .piano-keys
   position relative
   display flex

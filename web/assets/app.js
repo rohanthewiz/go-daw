@@ -314,6 +314,99 @@
         if (r.ok) location.reload();
       });
     });
+
+    // -- Web MIDI: a hardware keyboard is just another producer of the same
+    // noteOn/noteOff calls the on-screen keys make, so velocity mapping, key
+    // lighting, and channel routing are all shared. Notes deliberately skip
+    // debounced() for the same reason on-screen notes do. --
+
+    var midiBox = document.getElementById("midi-box");
+    var midiDot = document.getElementById("midi-dot");
+    var midiSel = document.getElementById("midi-in");
+
+    if (!navigator.requestMIDIAccess) {
+      // No Web MIDI (e.g. Safari): hide the shell rather than show a dead
+      // control. The rest of the piano works as before.
+      if (midiBox) midiBox.style.display = "none";
+    } else if (midiSel) {
+      var midiInput = null; // the MIDIInput currently feeding the synth
+      var midiHeld = {};    // note -> true; lets rebind/unplug release notes
+
+      // Release everything this device is sounding. Called before any
+      // rebind or on device loss — otherwise a note held across an unplug
+      // would ring until voice-steal claimed it (or forever, pre-decay).
+      function midiPanic() {
+        Object.keys(midiHeld).forEach(function (n) { noteOff(parseInt(n, 10)); });
+        midiHeld = {};
+      }
+
+      function onMIDIMessage(e) {
+        var status = e.data[0] & 0xf0, note = e.data[1], vel = e.data[2];
+        // Listen omni (low nibble = MIDI channel, ignored): a single-synth
+        // target has no use for channel filtering yet. Many keyboards send
+        // note-on velocity 0 instead of a real note-off (running-status
+        // optimization), so both spellings must release the note.
+        if (status === 0x90 && vel > 0) {
+          midiHeld[note] = true;
+          noteOn(note, vel / 127);
+        } else if (status === 0x80 || (status === 0x90 && vel === 0)) {
+          if (midiHeld[note]) {
+            delete midiHeld[note];
+            noteOff(note);
+          }
+        }
+      }
+
+      function bindInput(access, id) {
+        midiPanic();
+        if (midiInput) midiInput.onmidimessage = null;
+        midiInput = id ? access.inputs.get(id) || null : null;
+        if (midiInput) midiInput.onmidimessage = onMIDIMessage;
+        midiDot.dataset.live = midiInput ? "1" : "0";
+        midiDot.title = midiInput ? "MIDI: " + midiInput.name : "MIDI: no device";
+        try { localStorage.setItem("midi-in", id || ""); } catch (_) {}
+      }
+
+      // Rebuild the device list. Selection preference: what's currently
+      // bound, then the remembered device, then the first available — so
+      // plugging in a keyboard just works on a fresh profile.
+      function refreshInputs(access) {
+        var want = (midiInput && midiInput.id) || (function () {
+          try { return localStorage.getItem("midi-in") || ""; } catch (_) { return ""; }
+        })();
+        midiSel.innerHTML = "";
+        var none = document.createElement("option");
+        none.value = "";
+        none.textContent = "MIDI: none";
+        midiSel.appendChild(none);
+        access.inputs.forEach(function (inp) {
+          var o = document.createElement("option");
+          o.value = inp.id;
+          o.textContent = inp.name || inp.id;
+          midiSel.appendChild(o);
+        });
+        if (want && access.inputs.get(want)) midiSel.value = want;
+        else if (access.inputs.size > 0) midiSel.value = access.inputs.keys().next().value;
+        bindInput(access, midiSel.value);
+      }
+
+      navigator.requestMIDIAccess().then(function (access) {
+        refreshInputs(access);
+        // statechange covers hot-plug both ways; a full refresh (rather than
+        // incremental patching) keeps the list and binding trivially
+        // consistent, and midiPanic() inside bindInput prevents stuck notes
+        // when the bound device is the one that vanished.
+        access.onstatechange = function () { refreshInputs(access); };
+        midiSel.addEventListener("change", function () { bindInput(access, midiSel.value); });
+      }, function () {
+        // Permission denied: keep the shell visible but inert so the user
+        // can see why a plugged-in keyboard is silent.
+        midiDot.dataset.live = "err";
+        midiDot.title = "MIDI access blocked by the browser";
+        midiSel.disabled = true;
+        midiSel.options[0].textContent = "MIDI blocked";
+      });
+    }
   }
 
   // ---- meters via SSE ------------------------------------------------------

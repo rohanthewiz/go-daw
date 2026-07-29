@@ -1,0 +1,304 @@
+// go-daw mixer stylesheet (Stylus source, compiled by go-styl at startup).
+// Dark studio theme: near-black chassis, panel strips, green/amber/red meters.
+
+bg = #16181d
+panel = #21242c
+panel2 = #2a2e38
+line = #383d4a
+ink = #cdd3e0
+inkDim = #7d8496
+accent = #4da3ff
+green = #37c66a
+amber = #e8c05a
+
+*
+  box-sizing border-box
+
+body
+  margin 0
+  background bg
+  color ink
+  font 12px/1.4 -apple-system, "Helvetica Neue", sans-serif
+  user-select none
+
+// ---- transport bar ----
+.transport
+  display flex
+  align-items center
+  gap 10px
+  padding 8px 14px
+  background panel2
+  border-bottom 1px solid line
+  position sticky
+  top 0
+  z-index 10
+
+.brand
+  font-weight 700
+  letter-spacing 1px
+  color accent
+  margin-right 6px
+
+.rec-btn
+  background #3a2026
+  color #ff5d6c
+  border 1px solid #63323c
+  border-radius 4px
+  padding 4px 10px
+  cursor pointer
+  &[data-on="1"]
+    background #c0263a
+    color #fff
+    animation recblink 1s infinite
+
+@keyframes recblink
+  50%
+    opacity 0.55
+
+.rec-time
+  min-width 52px
+  color #ff8d99
+  font-variant-numeric tabular-nums
+
+.scene-box
+  display flex
+  gap 6px
+  margin-left auto
+
+.badge.warn
+  background #4a3b16
+  color #e8c05a
+  border-radius 3px
+  padding 2px 8px
+
+.conn-dot
+  color #555
+  &[data-live="1"]
+    color green
+
+// ---- console layout ----
+.console
+  display flex
+  gap 14px
+  padding 14px
+  align-items flex-start
+
+.channels
+  display flex
+  gap 8px
+  overflow-x auto
+  flex 1
+
+.buses
+  display flex
+  gap 8px
+
+// ---- strips ----
+.strip
+  background panel
+  border 1px solid line
+  border-radius 6px
+  padding 8px
+  width 168px
+  flex-shrink 0
+  display flex
+  flex-direction column
+  gap 6px
+
+.strip-group
+  background #232833
+
+.strip-master
+  background #2b2430
+  border-color #4a3f55
+
+.strip-name
+  font-weight 700
+  text-align center
+  padding 2px 0
+  border-bottom 1px solid line
+
+.limiter-note
+  text-align center
+  color inkDim
+  font-size 10px
+
+// ---- sections ----
+.sect
+  background panel2
+  border-radius 4px
+  padding 3px 6px
+  > summary
+    cursor pointer
+    color inkDim
+    font-weight 600
+    font-size 11px
+    text-transform uppercase
+    letter-spacing 0.5px
+
+.eq-band
+  border-top 1px dashed line
+  padding-top 3px
+  margin-top 3px
+
+.eq-band-head
+  color accent
+  font-size 10px
+  font-weight 700
+
+// ---- controls ----
+.ctl
+  display flex
+  align-items center
+  gap 5px
+  margin 3px 0
+  label
+    width 44px
+    color inkDim
+    font-size 10px
+    flex-shrink 0
+  input[type="range"]
+    flex 1
+    min-width 0
+    accent-color accent
+    height 14px
+  .readout
+    width 40px
+    text-align right
+    font-size 10px
+    color ink
+    font-variant-numeric tabular-nums
+    flex-shrink 0
+
+.toggle
+  display inline-flex
+  align-items center
+  gap 4px
+  color inkDim
+  font-size 10px
+  input
+    accent-color green
+
+// ---- source & routing ----
+.src-row, .route-row
+  display flex
+  align-items center
+  gap 5px
+  label
+    color inkDim
+    font-size 10px
+  select
+    flex 1
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+
+.src-osc, .src-wav
+  display none
+  &[data-visible="1"]
+    display block
+
+.src-wav
+  input[type="text"]
+    width 100%
+    background panel2
+    border 1px solid line
+    color ink
+    border-radius 3px
+    padding 2px 4px
+
+// ---- modules ----
+.mod
+  border 1px solid line
+  border-radius 4px
+  padding 3px 5px
+  margin 4px 0
+  background panel
+
+.mod-head
+  display flex
+  justify-content space-between
+  font-weight 600
+  color accent
+
+.mod-remove
+  background none
+  border none
+  color #ff5d6c
+  cursor pointer
+  font-size 13px
+
+.mod-add select
+  width 100%
+  background panel2
+  color ink
+  border 1px solid line
+  border-radius 3px
+
+// ---- mute ----
+.mute-btn
+  background panel2
+  color inkDim
+  border 1px solid line
+  border-radius 4px
+  padding 3px 0
+  cursor pointer
+  font-weight 700
+  &[data-on="1"]
+    background #b3435c
+    color #fff
+
+// ---- fader & meter ----
+.fader-row
+  display flex
+  justify-content center
+  gap 10px
+  padding-top 4px
+
+.fader-wrap
+  display flex
+  flex-direction column
+  align-items center
+  gap 4px
+
+input.fader
+  writing-mode vertical-lr
+  direction rtl
+  width 28px
+  height 170px
+  accent-color accent
+
+.fader-readout
+  width auto
+
+.meter
+  position relative
+  width 14px
+  height 170px
+  background #101216
+  border 1px solid line
+  border-radius 3px
+  overflow hidden
+
+.meter-rms
+  position absolute
+  bottom 0
+  left 0
+  right 0
+  height 0
+  background linear-gradient(to top, green 0%, green 60%, #e8c05a 82%, #ff5d6c 100%)
+  background-size 100% 170px
+  background-position bottom
+
+.meter-peak
+  position absolute
+  left 0
+  right 0
+  bottom 0
+  height 2px
+  background #fff
+  opacity 0.85
+
+button
+  font inherit

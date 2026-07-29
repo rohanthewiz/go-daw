@@ -1,0 +1,11 @@
+{
+  "channels": 8,
+  "groups": 4,
+  "sampleRate": 48000,
+  "blockSize": 256,
+  "duplex": true,
+  "httpAddr": ":8000",
+  "dbPath": "godaw.db",
+  "recordingsDir": "recordings",
+  "pluginsDir": "plugins"
+}

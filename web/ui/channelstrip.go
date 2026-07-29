@@ -143,12 +143,16 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 
 	srcType := "none"
 	oscFreq, oscLevel := 220.0, -18.0
+	synthLevel := -12.0
 	wavPath := ""
 	switch s := ch.Source().(type) {
 	case *source.Oscillator:
 		srcType = "osc"
 		oscFreq = s.FreqHz.Get()
 		oscLevel = s.LevelDB.Get()
+	case *source.PolySynth:
+		srcType = "synth"
+		synthLevel = s.LevelDB.Get()
 	case *source.WavSource:
 		srcType = "wav"
 		wavPath = strings.TrimPrefix(s.Name(), "wav:")
@@ -160,7 +164,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		b.Label().T("Src"),
 		b.Select("data-role", "source-select", "data-id", id).R(
 			b.Wrap(func() {
-				for _, opt := range []string{"none", "osc", "live", "wav"} {
+				for _, opt := range []string{"none", "osc", "synth", "live", "wav"} {
 					attrs := []string{"value", opt}
 					if opt == srcType {
 						attrs = append(attrs, "selected", "selected")
@@ -176,6 +180,9 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		b.DivClass("src-osc", "data-id", id).R(
 			slider(b, "src", ch.ID, "osc.freq", "Freq", 20, 5000, 1, oscFreq, "log"),
 			slider(b, "src", ch.ID, "osc.level", "Lvl", -60, 0, 1, oscLevel, ""),
+		),
+		b.DivClass("src-synth", "data-id", id).R(
+			slider(b, "src", ch.ID, "synth.level", "Lvl", -60, 0, 1, synthLevel, ""),
 		),
 		b.DivClass("src-wav", "data-id", id).R(
 			b.Input("type", "text", "placeholder", "path/to/file.wav",

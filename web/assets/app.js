@@ -174,8 +174,10 @@
 
   function showSourceRows(id, type) {
     var osc = document.querySelector('.src-osc[data-id="' + id + '"]');
+    var syn = document.querySelector('.src-synth[data-id="' + id + '"]');
     var wav = document.querySelector('.src-wav[data-id="' + id + '"]');
     if (osc) osc.dataset.visible = type === "osc" ? "1" : "0";
+    if (syn) syn.dataset.visible = type === "synth" ? "1" : "0";
     if (wav) wav.dataset.visible = type === "wav" ? "1" : "0";
   }
 
@@ -183,6 +185,136 @@
   document.querySelectorAll('select[data-role="source-select"]').forEach(function (sel) {
     showSourceRows(sel.dataset.id, sel.value);
   });
+
+  // ---- virtual piano -------------------------------------------------------
+  // Note events bypass debounced() on purpose: unlike a fader stream, every
+  // key event matters and order must hold (a swallowed note-off is a stuck
+  // note). The server side is wait-free, so per-keypress POSTs are cheap.
+
+  var pianoKeys = document.getElementById("piano-keys");
+  if (pianoKeys) {
+    var pianoSel = document.getElementById("piano-channel");
+    var octLabel = document.getElementById("piano-oct");
+    var base = 60; // MIDI note of the leftmost key; 60 = middle C (C4)
+    var BASE_MIN = 24, BASE_MAX = 84; // C1..C6 (top key = base+24 = C8 max)
+
+    var pianoCh = function () { return pianoSel ? pianoSel.value : "1"; };
+
+    function light(note, on) {
+      var idx = note - base;
+      if (idx < 0 || idx > 24) return;
+      var el = pianoKeys.querySelector('.piano-key[data-idx="' + idx + '"]');
+      if (el) el.dataset.on = on ? "1" : "0";
+    }
+
+    function noteOn(note, vel) {
+      light(note, true);
+      post("/api/channel/" + pianoCh() + "/note", { note: note, on: true, velocity: vel });
+    }
+    function noteOff(note) {
+      light(note, false);
+      post("/api/channel/" + pianoCh() + "/note", { note: note, on: false });
+    }
+
+    function setBase(nb) {
+      base = Math.max(BASE_MIN, Math.min(BASE_MAX, nb));
+      if (octLabel) octLabel.textContent = "C" + (base / 12 - 1);
+      // Clear highlights: lit keys now show different pitches. Held notes
+      // still release correctly because note-offs use the stored pitch.
+      pianoKeys.querySelectorAll('.piano-key[data-on="1"]').forEach(function (k) {
+        k.dataset.on = "0";
+      });
+    }
+
+    // -- mouse / touch: press, release, and glissando (drag across keys) --
+
+    var pointerNotes = {}; // pointerId -> sounding MIDI note
+
+    function velFromEvent(e, el) {
+      // Strike position as velocity: clicking low on the key plays louder,
+      // mirroring how far a real key travels.
+      var r = el.getBoundingClientRect();
+      var y = (e.clientY - r.top) / r.height;
+      return Math.min(1, Math.max(0.2, 0.35 + 0.65 * y));
+    }
+
+    pianoKeys.addEventListener("pointerdown", function (e) {
+      var el = e.target.closest(".piano-key");
+      if (!el) return;
+      e.preventDefault();
+      var note = base + parseInt(el.dataset.idx, 10);
+      pointerNotes[e.pointerId] = note;
+      noteOn(note, velFromEvent(e, el));
+    });
+
+    pianoKeys.addEventListener("pointerover", function (e) {
+      if (pointerNotes[e.pointerId] === undefined || !(e.buttons & 1)) return;
+      var el = e.target.closest(".piano-key");
+      if (!el) return;
+      var note = base + parseInt(el.dataset.idx, 10);
+      if (note === pointerNotes[e.pointerId]) return;
+      noteOff(pointerNotes[e.pointerId]);
+      pointerNotes[e.pointerId] = note;
+      noteOn(note, velFromEvent(e, el));
+    });
+
+    function releasePointer(e) {
+      if (pointerNotes[e.pointerId] === undefined) return;
+      noteOff(pointerNotes[e.pointerId]);
+      delete pointerNotes[e.pointerId];
+    }
+    document.addEventListener("pointerup", releasePointer);
+    document.addEventListener("pointercancel", releasePointer);
+
+    // -- computer keyboard: home row whites, row above blacks --
+
+    var KEYMAP = {
+      a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11,
+      k: 12, o: 13, l: 14, p: 15, ";": 16,
+    };
+    var kbdHeld = {}; // key char -> sounding MIDI note (pitch fixed at press
+                      // time, so an octave shift mid-hold can't strand a note)
+
+    function isTypingTarget(e) {
+      var t = e.target;
+      return t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA");
+    }
+
+    document.addEventListener("keydown", function (e) {
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e)) return;
+      var k = e.key.toLowerCase();
+      if (k === "z") return setBase(base - 12);
+      if (k === "x") return setBase(base + 12);
+      if (!(k in KEYMAP) || kbdHeld[k] !== undefined) return;
+      var note = base + KEYMAP[k];
+      kbdHeld[k] = note;
+      noteOn(note, 0.8);
+    });
+
+    document.addEventListener("keyup", function (e) {
+      var k = e.key.toLowerCase();
+      if (kbdHeld[k] === undefined) return;
+      noteOff(kbdHeld[k]);
+      delete kbdHeld[k];
+    });
+
+    document.getElementById("piano-oct-down").addEventListener("click", function () {
+      setBase(base - 12);
+    });
+    document.getElementById("piano-oct-up").addEventListener("click", function () {
+      setBase(base + 12);
+    });
+
+    // Picking a channel that isn't running a synth installs one (structural
+    // change → reload, per the page's single-source-of-truth convention).
+    if (pianoSel) pianoSel.addEventListener("change", function () {
+      var opt = pianoSel.options[pianoSel.selectedIndex];
+      if (opt && opt.dataset.synth === "1") return;
+      post("/api/channel/" + pianoSel.value + "/source", { type: "synth" }).then(function (r) {
+        if (r.ok) location.reload();
+      });
+    });
+  }
 
   // ---- meters via SSE ------------------------------------------------------
 

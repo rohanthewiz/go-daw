@@ -194,7 +194,7 @@ body
     border 1px solid line
     border-radius 3px
 
-.src-osc, .src-wav
+.src-osc, .src-synth, .src-wav
   display none
   &[data-visible="1"]
     display block
@@ -299,6 +299,94 @@ input.fader
   height 2px
   background #fff
   opacity 0.85
+
+// ---- virtual piano ----
+.piano
+  margin 0 14px 14px
+  background panel
+  border 1px solid line
+  border-radius 6px
+  padding 8px 10px
+
+.piano-head
+  display flex
+  align-items center
+  gap 8px
+  margin-bottom 8px
+  label
+    color inkDim
+    font-size 10px
+  select
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+  button
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+    padding 2px 8px
+    cursor pointer
+
+.piano-title
+  font-weight 700
+  color accent
+  text-transform uppercase
+  letter-spacing 0.5px
+  font-size 11px
+
+.piano-oct
+  min-width 26px
+  text-align center
+  font-variant-numeric tabular-nums
+
+.piano-hint
+  margin-left auto
+  color inkDim
+  font-size 10px
+
+.piano-keys
+  position relative
+  display flex
+  height 120px
+  // Blocks browser touch gestures (scroll/zoom) so pointer events reach keys.
+  touch-action none
+
+.piano-key
+  border-radius 0 0 4px 4px
+  cursor pointer
+  display flex
+  align-items flex-end
+  justify-content center
+  padding-bottom 4px
+
+.piano-key.white
+  flex 1
+  background #e8eaf0
+  border 1px solid #9aa0ad
+  border-top none
+  color #6a7080
+  &[data-on="1"]
+    background accent
+    color #fff
+
+.piano-key.black
+  position absolute
+  top 0
+  height 62%
+  background #14161b
+  border 1px solid #000
+  z-index 2
+  color #7d8496
+  &[data-on="1"]
+    background accent
+    color #fff
+
+.key-hint
+  font-size 9px
+  text-transform uppercase
+  pointer-events none
 
 button
   font inherit

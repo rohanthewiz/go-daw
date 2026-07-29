@@ -54,13 +54,21 @@ func main() {
 
 	// Default sources so a fresh launch makes sound and shows live input:
 	// channel 1 gets a quiet test oscillator, channel 2 the live feed (when
-	// capture is available). Everything is changeable from the UI.
+	// capture is available), channel 3 a polyphonic synth so the virtual
+	// piano is playable immediately. Everything is changeable from the UI.
 	con := eng.Console
 	if len(con.Channels) >= 1 {
 		if err := con.SetChannelSource(con.Channels[0], mixer.SourceState{
 			Type: "osc", FreqHz: 220, LevelDB: -24,
 		}); err != nil {
 			logger.LogErr(err)
+		}
+	}
+	if len(con.Channels) >= 3 {
+		if err := con.SetChannelSource(con.Channels[2], mixer.SourceState{Type: "synth"}); err != nil {
+			logger.LogErr(err)
+		} else {
+			con.Channels[2].SetName("Piano")
 		}
 	}
 

@@ -122,7 +122,7 @@ type ReverbState struct {
 }
 
 type SourceState struct {
-	Type    string  `json:"type"` // "none" | "osc" | "wav" | "live"
+	Type    string  `json:"type"` // "none" | "osc" | "wav" | "live" | "synth"
 	Path    string  `json:"path,omitempty"`
 	FreqHz  float64 `json:"freqHz,omitempty"`
 	LevelDB float64 `json:"levelDb,omitempty"`
@@ -216,6 +216,9 @@ func captureSource(s source.Source) SourceState {
 		}
 	case *source.WavSource:
 		return SourceState{Type: "wav", Path: strings.TrimPrefix(src.Name(), "wav:")}
+	case *source.PolySynth:
+		// Note state is performance, not mix — only the level is scene-worthy.
+		return SourceState{Type: "synth", LevelDB: src.LevelDB.Get()}
 	case *source.LiveSource:
 		return SourceState{Type: "live"}
 	default:
@@ -324,6 +327,14 @@ func (c *Console) SetChannelSource(ch *Channel, ss SourceState) error {
 			osc.SetWave(source.WaveSquare)
 		}
 		ch.SetSource(osc)
+	case "synth":
+		level := ss.LevelDB
+		if level == 0 {
+			// Zero doubles as "unset" (JSON omitempty); -12 dBFS leaves
+			// headroom for chords — 16 voices at full level would clip hard.
+			level = -12
+		}
+		ch.SetSource(source.NewPolySynth(c.SampleRate, level))
 	case "wav":
 		ws, err := source.LoadWav(ss.Path, c.SampleRate)
 		if err != nil {

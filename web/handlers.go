@@ -105,17 +105,63 @@ func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 	if err != nil {
 		return fail(ctx, err, 400)
 	}
-	osc, isOsc := ch.Source().(*source.Oscillator)
-	if !isOsc {
-		return fail(ctx, serr.New("channel source is not an oscillator"), 400)
-	}
-	switch req.Name {
-	case "osc.freq":
-		osc.FreqHz.Set(req.Value)
-	case "osc.level":
-		osc.LevelDB.Set(req.Value)
+	switch src := ch.Source().(type) {
+	case *source.Oscillator:
+		switch req.Name {
+		case "osc.freq":
+			src.FreqHz.Set(req.Value)
+		case "osc.level":
+			src.LevelDB.Set(req.Value)
+		default:
+			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
+		}
+	case *source.PolySynth:
+		switch req.Name {
+		case "synth.level":
+			src.LevelDB.Set(req.Value)
+		default:
+			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
+		}
 	default:
-		return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
+		return fail(ctx, serr.New("channel source has no adjustable parameters"), 400)
+	}
+	return ok(ctx)
+}
+
+// ---- virtual piano ----
+
+type noteReq struct {
+	Note     int     `json:"note"`     // MIDI note number 0..127
+	On       bool    `json:"on"`       // true = key down, false = key up
+	Velocity float64 `json:"velocity"` // 0..1; ignored for note-off
+}
+
+// noteHandler feeds virtual-piano key events into the channel's PolySynth.
+// Deliberately bypasses the debounced param path: every keypress matters, and
+// PolySynth's internal lock-free ring makes each call wait-free with respect
+// to the audio thread, so there is nothing to coalesce.
+func (srv *Server) noteHandler(ctx rweb.Context) error {
+	ch, err := srv.channel(ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	req, err := decodeBody[noteReq](ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	if req.Note < 0 || req.Note > 127 {
+		return fail(ctx, serr.New("note out of range", "note", strconv.Itoa(req.Note)), 400)
+	}
+	syn, isSynth := ch.Source().(*source.PolySynth)
+	if !isSynth {
+		// 409 (not 400) so the client can distinguish "wrong source type" —
+		// e.g. someone swapped the source mid-performance — from a bad request.
+		return fail(ctx, serr.New("channel source is not a synth", "channel", strconv.Itoa(ch.ID)), 409)
+	}
+	if req.On {
+		syn.NoteOn(req.Note, req.Velocity)
+	} else {
+		syn.NoteOff(req.Note)
 	}
 	return ok(ctx)
 }

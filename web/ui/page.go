@@ -60,6 +60,8 @@ func MixerPage(d PageData) string {
 				),
 			),
 
+			element.RenderComponents(b, PianoPanel{Console: d.Console}),
+
 			b.Script("src", "/assets/app.js").R(),
 		),
 	)

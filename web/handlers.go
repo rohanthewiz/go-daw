@@ -7,6 +7,7 @@ import (
 	"github.com/rohanthewiz/go-daw/audio/source"
 	"github.com/rohanthewiz/go-daw/mixer"
 	"github.com/rohanthewiz/go-daw/module"
+	"github.com/rohanthewiz/go-daw/tutorial"
 	"github.com/rohanthewiz/go-daw/web/ui"
 	"github.com/rohanthewiz/logger"
 	"github.com/rohanthewiz/rweb"
@@ -70,6 +71,13 @@ func (srv *Server) stateHandler(ctx rweb.Context) error {
 
 func (srv *Server) modulesHandler(ctx rweb.Context) error {
 	return ctx.WriteJSON(module.Available())
+}
+
+// lessonsHandler serves the built-in tutorial catalog. Lessons are static
+// compiled-in data, so the client fetches once at page load and drives the
+// whole tutorial from that snapshot.
+func (srv *Server) lessonsHandler(ctx rweb.Context) error {
+	return ctx.WriteJSON(tutorial.Lessons())
 }
 
 // ---- channel parameters ----

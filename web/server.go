@@ -65,6 +65,7 @@ func Start(cfg *config.Config, engine *audio.Engine, st *store.Store) error {
 	api.Get("/state", srv.stateHandler)
 	api.Get("/modules", srv.modulesHandler)
 	api.Get("/scenes", srv.scenesListHandler)
+	api.Get("/lessons", srv.lessonsHandler)
 	api.Post("/channel/:id/param", srv.channelParamHandler)
 	api.Post("/channel/:id/source", srv.channelSourceHandler)
 	api.Post("/channel/:id/source-param", srv.sourceParamHandler)

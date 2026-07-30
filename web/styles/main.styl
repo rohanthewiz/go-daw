@@ -402,5 +402,86 @@ input.fader
   text-transform uppercase
   pointer-events none
 
+// ---- piano tutorial ----
+// Key cues: the guide ring is amber so it stays readable under both idle key
+// colors and the accent-blue pressed fill (ring + fill can show together); a
+// miss flashes the struck key red. The miss rules sit after the .white/.black
+// blocks so they win the specificity tie against [data-on].
+.piano-key[data-guide="1"]
+  box-shadow inset 0 0 0 3px amber
+
+.piano-key.white[data-miss="1"]
+  background #d24856
+  color #fff
+
+.piano-key.black[data-miss="1"]
+  background #d24856
+  color #fff
+
+.tutorial
+  margin 0 14px 14px
+  background panel
+  border 1px solid line
+  border-radius 6px
+  padding 8px 10px
+
+.tut-head
+  display flex
+  align-items center
+  gap 8px
+  select
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+  button
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+    padding 2px 8px
+    cursor pointer
+
+.tut-title
+  font-weight 700
+  color amber
+  text-transform uppercase
+  letter-spacing 0.5px
+  font-size 11px
+
+.tut-progress
+  font-variant-numeric tabular-nums
+  color ink
+
+.tut-msg
+  margin-left auto
+  color inkDim
+  font-size 10px
+
+// One chip per lesson step; long tunes scroll horizontally rather than wrap
+// so the strip reads left-to-right like a score.
+.tut-strip
+  display flex
+  gap 4px
+  margin-top 8px
+  overflow-x auto
+  padding-bottom 2px
+
+.tut-chip
+  flex-shrink 0
+  padding 2px 8px
+  background panel2
+  border 1px solid line
+  border-radius 10px
+  font-size 10px
+  color inkDim
+  &[data-done="1"]
+    color green
+    border-color green
+  &[data-cur="1"]
+    background amber
+    border-color amber
+    color #16181d
+
 button
   font inherit

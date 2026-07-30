@@ -207,13 +207,18 @@
       if (el) el.dataset.on = on ? "1" : "0";
     }
 
+    // Every input route (mouse, computer keyboard, MIDI, tutorial demo)
+    // funnels through these two calls, so the tutorial checker taps them here
+    // rather than each producer separately.
     function noteOn(note, vel) {
       light(note, true);
       post("/api/channel/" + pianoCh() + "/note", { note: note, on: true, velocity: vel });
+      tutNoteOn(note);
     }
     function noteOff(note) {
       light(note, false);
       post("/api/channel/" + pianoCh() + "/note", { note: note, on: false });
+      tutNoteOff(note);
     }
 
     function setBase(nb) {
@@ -224,6 +229,9 @@
       pianoKeys.querySelectorAll('.piano-key[data-on="1"]').forEach(function (k) {
         k.dataset.on = "0";
       });
+      // Re-aim tutorial guides: after a shift, the highlighted keys would
+      // point at different pitches than the lesson expects.
+      if (tutActive) guideStep();
     }
 
     // -- mouse / touch: press, release, and glissando (drag across keys) --
@@ -406,6 +414,242 @@
         midiSel.disabled = true;
         midiSel.options[0].textContent = "MIDI blocked";
       });
+    }
+
+    // -- tutorial: guided lessons over the same noteOn/noteOff plumbing --
+    // The server owns the lesson catalog (/api/lessons); this block owns all
+    // interaction. Amber guide rings mark the next step's keys, any input
+    // route can answer (they all funnel through noteOn), chord steps advance
+    // only when the full set is held at once, and Listen replays the lesson
+    // through the synth by driving the very same noteOn/noteOff as live play.
+
+    var tutPanel = document.getElementById("tutorial");
+    var tutSel = document.getElementById("tut-lesson");
+    var tutStrip = document.getElementById("tut-strip");
+    var tutProg = document.getElementById("tut-progress");
+    var tutMsg = document.getElementById("tut-msg");
+
+    var tutLessons = [];   // catalog fetched once at page load
+    var tutActive = false; // when true, tutNoteOn checks input against steps
+    var tutStep = 0, tutMisses = 0;
+    var tutHeld = {};      // note -> true; lets chord steps require a full hold
+    var demoOn = false;    // demo notes replay through noteOn; this flag keeps
+                           // them (and stray play during a demo) out of the checker
+    var demoTimers = [], demoSounding = {};
+
+    function tutLesson() {
+      return tutSel ? tutLessons[parseInt(tutSel.value, 10)] || null : null;
+    }
+
+    // Input checker, fed by noteOn. A note outside the current step counts as
+    // a miss (red flash); a step completes when every one of its notes is
+    // down simultaneously — which for melody steps is just the one note.
+    // Checking only on note-on means holding a common tone across two chords
+    // is fine, exactly as it is on a real piano.
+    function tutNoteOn(note) {
+      if (!tutActive || demoOn) return;
+      tutHeld[note] = true;
+      var lesson = tutLesson();
+      var step = lesson && lesson.steps[tutStep];
+      if (!step) return;
+      if (step.notes.indexOf(note) === -1) {
+        tutMisses++;
+        flashMiss(note);
+        paintTutProgress();
+        return;
+      }
+      var complete = step.notes.every(function (n) { return tutHeld[n]; });
+      if (complete) tutAdvance();
+    }
+
+    function tutNoteOff(note) { delete tutHeld[note]; }
+
+    function keyEl(note) {
+      var idx = note - base;
+      if (idx < 0 || idx > 24) return null;
+      return pianoKeys.querySelector('.piano-key[data-idx="' + idx + '"]');
+    }
+
+    function clearGuides() {
+      pianoKeys.querySelectorAll('.piano-key[data-guide="1"]').forEach(function (k) {
+        k.removeAttribute("data-guide");
+      });
+    }
+
+    function guideStep() {
+      clearGuides();
+      var lesson = tutLesson();
+      var step = tutActive && lesson && lesson.steps[tutStep];
+      if (!step) return;
+      step.notes.forEach(function (n) {
+        var el = keyEl(n);
+        if (el) el.dataset.guide = "1";
+      });
+    }
+
+    function flashMiss(note) {
+      var el = keyEl(note);
+      if (!el) return;
+      el.dataset.miss = "1";
+      setTimeout(function () { el.removeAttribute("data-miss"); }, 250);
+    }
+
+    function buildStrip(lesson) {
+      tutStrip.innerHTML = "";
+      lesson.steps.forEach(function (s, i) {
+        var chip = document.createElement("span");
+        chip.className = "tut-chip";
+        chip.dataset.i = String(i);
+        chip.textContent = s.label;
+        tutStrip.appendChild(chip);
+      });
+    }
+
+    // Mark chips before cur done, cur current, the rest pending; cur = -1
+    // clears everything. Steps.length marks the whole strip done.
+    function stripCursor(cur) {
+      tutStrip.querySelectorAll(".tut-chip").forEach(function (chip) {
+        var i = parseInt(chip.dataset.i, 10);
+        if (i < cur) {
+          chip.dataset.done = "1";
+          chip.removeAttribute("data-cur");
+        } else if (i === cur) {
+          chip.dataset.cur = "1";
+          chip.removeAttribute("data-done");
+          chip.scrollIntoView({ block: "nearest", inline: "center" });
+        } else {
+          chip.removeAttribute("data-done");
+          chip.removeAttribute("data-cur");
+        }
+      });
+    }
+
+    function paintTutProgress() {
+      var lesson = tutLesson();
+      if (!lesson) { tutProg.textContent = ""; return; }
+      var text = Math.min(tutStep + 1, lesson.steps.length) + "/" + lesson.steps.length;
+      if (tutMisses) text += " · " + tutMisses + " missed";
+      tutProg.textContent = text;
+    }
+
+    // Shift the keyboard so every lesson note is visible: base goes to the C
+    // at or below the lesson's lowest note (lessons are authored to span at
+    // most the two visible octaves from there).
+    function fitBase(lesson) {
+      var min = Infinity;
+      lesson.steps.forEach(function (s) {
+        s.notes.forEach(function (n) { min = Math.min(min, n); });
+      });
+      if (isFinite(min)) setBase(Math.floor(min / 12) * 12);
+    }
+
+    function startLesson() {
+      var lesson = tutLesson();
+      if (!lesson) return;
+      stopDemo();
+      tutActive = true;
+      tutStep = 0;
+      tutMisses = 0;
+      tutHeld = {};
+      fitBase(lesson);
+      buildStrip(lesson);
+      stripCursor(0);
+      guideStep();
+      paintTutProgress();
+      tutMsg.textContent = lesson.steps[0].notes.length > 1
+        ? "Hold every ringed key at once"
+        : "Play the ringed key";
+    }
+
+    function tutAdvance() {
+      var lesson = tutLesson();
+      tutStep++;
+      if (tutStep >= lesson.steps.length) {
+        tutActive = false;
+        clearGuides();
+        stripCursor(lesson.steps.length);
+        paintTutProgress();
+        tutMsg.textContent = tutMisses === 0
+          ? "Lesson complete — flawless!"
+          : "Lesson complete — " + tutMisses + " missed. Try again?";
+        return;
+      }
+      stripCursor(tutStep);
+      guideStep();
+      paintTutProgress();
+    }
+
+    function stopDemo() {
+      demoTimers.forEach(clearTimeout);
+      demoTimers = [];
+      demoOn = false;
+      Object.keys(demoSounding).forEach(function (n) { noteOff(parseInt(n, 10)); });
+      demoSounding = {};
+    }
+
+    // Listen mode: schedule the whole lesson up front with plain timeouts.
+    // Timing is display-grade, not sequencer-grade — fine for "hear how it
+    // goes". Notes release slightly early so repeats re-strike audibly.
+    function playDemo() {
+      var lesson = tutLesson();
+      if (!lesson) return;
+      stopDemo();
+      tutActive = false; // Listen is its own mode; Start re-arms checking
+      clearGuides();
+      fitBase(lesson);
+      buildStrip(lesson);
+      demoOn = true;
+      tutMsg.textContent = "Listen…";
+      var t = 0;
+      lesson.steps.forEach(function (s, i) {
+        var dur = s.ms || 400;
+        demoTimers.push(setTimeout(function () {
+          stripCursor(i);
+          s.notes.forEach(function (n) { demoSounding[n] = true; noteOn(n, 0.7); });
+        }, t));
+        demoTimers.push(setTimeout(function () {
+          s.notes.forEach(function (n) { delete demoSounding[n]; noteOff(n); });
+        }, t + dur - 80));
+        t += dur;
+      });
+      demoTimers.push(setTimeout(function () {
+        demoOn = false;
+        stripCursor(-1);
+        tutMsg.textContent = lesson.desc + " Press Start to try it.";
+      }, t));
+    }
+
+    function stopTutorial() {
+      tutActive = false;
+      stopDemo();
+      clearGuides();
+      previewLesson();
+    }
+
+    // Idle view of the selected lesson: its chips and description, no cursor.
+    function previewLesson() {
+      var lesson = tutLesson();
+      if (!lesson) return;
+      buildStrip(lesson);
+      tutMsg.textContent = lesson.desc;
+      tutProg.textContent = "";
+    }
+
+    if (tutPanel && tutSel) {
+      fetch("/api/lessons").then(function (r) { return r.json(); }).then(function (d) {
+        tutLessons = d || [];
+        previewLesson();
+      }).catch(function (e) { console.error("lessons", e); });
+
+      tutSel.addEventListener("change", function () {
+        tutActive = false;
+        stopDemo();
+        clearGuides();
+        previewLesson();
+      });
+      document.getElementById("tut-start").addEventListener("click", startLesson);
+      document.getElementById("tut-demo").addEventListener("click", playDemo);
+      document.getElementById("tut-stop").addEventListener("click", stopTutorial);
     }
   }
 

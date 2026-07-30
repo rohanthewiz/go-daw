@@ -61,6 +61,7 @@ func MixerPage(d PageData) string {
 			),
 
 			element.RenderComponents(b, PianoPanel{Console: d.Console}),
+			element.RenderComponents(b, TutorialPanel{}),
 
 			b.Script("src", "/assets/app.js").R(),
 		),

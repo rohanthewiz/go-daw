@@ -176,7 +176,7 @@ record/       SPSC ring, WAV writer, recorder lifecycle
 store/        bytdb scene persistence
 tutorial/     built-in piano lesson catalog (pure data, served as JSON)
 web/          rweb server, handlers, SSE meters, element UI, styl styles
-plugins/src/  example external plugins (flanger, bass_xpander)
+plugins/src/  example external plugins (flanger, bass_xpander, cross_fader)
 ```
 
 ## Tests

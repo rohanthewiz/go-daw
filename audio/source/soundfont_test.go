@@ -77,8 +77,75 @@ func TestSFSynthProgramChange(t *testing.T) {
 	}
 }
 
+// TestSFSynthSustainPedal verifies CC64 reaches meltysynth: a note released
+// under the pedal keeps sounding, then decays once the pedal lifts.
+func TestSFSynthSustainPedal(t *testing.T) {
+	s, err := NewSFSynth(testBank(t), 48000, -6, 0)
+	if err != nil {
+		t.Fatalf("NewSFSynth: %v", err)
+	}
+	l, r := make([]float32, 256), make([]float32, 256)
+
+	s.Sustain(true)
+	s.NoteOn(60, 0.8)
+	var peak float32
+	for range 4 {
+		s.Read(l, r)
+		if p := blockPeak(l); p > peak {
+			peak = p
+		}
+	}
+	s.NoteOff(60)
+	// Half a second after note-off: a piano release envelope would be near
+	// silent by now, so remaining level demonstrates the pedal is holding.
+	for range 90 {
+		s.Read(l, r)
+	}
+	s.Read(l, r)
+	if held := blockPeak(l); held < peak/10 {
+		t.Fatalf("expected pedal to sustain the note: level %v vs peak %v", held, peak)
+	}
+
+	s.Sustain(false)
+	for range 400 { // ~2.1 s release window, matching the lifecycle test
+		s.Read(l, r)
+	}
+	s.Read(l, r)
+	if tail := blockPeak(l); tail > peak/10 {
+		t.Fatalf("expected decay after pedal up: tail %v vs peak %v", tail, peak)
+	}
+}
+
+// TestSFSynthDrumsToggle verifies percussion routing: with drums on, notes hit
+// the GM percussion channel and still produce audio, and the mirror state is
+// captured for scenes/UI.
+func TestSFSynthDrumsToggle(t *testing.T) {
+	s, err := NewSFSynth(testBank(t), 48000, -6, 0)
+	if err != nil {
+		t.Fatalf("NewSFSynth: %v", err)
+	}
+	l, r := make([]float32, 256), make([]float32, 256)
+
+	s.SetDrums(true)
+	if !s.Drums() {
+		t.Fatal("Drums() should mirror SetDrums(true)")
+	}
+	s.NoteOn(38, 0.9) // GM acoustic snare
+	var peak float32
+	for range 8 {
+		s.Read(l, r)
+		if p := blockPeak(l); p > peak {
+			peak = p
+		}
+	}
+	if peak == 0 {
+		t.Fatal("expected audio from the percussion channel")
+	}
+}
+
 // TestSFSynthReadNoAllocs enforces the realtime contract on the meltysynth
 // path exactly as TestPolySynthReadNoAllocs does for the additive synth.
+// Pedal and drums events ride along so their drain paths are covered too.
 func TestSFSynthReadNoAllocs(t *testing.T) {
 	s, err := NewSFSynth(testBank(t), 48000, -6, 0)
 	if err != nil {
@@ -88,8 +155,12 @@ func TestSFSynthReadNoAllocs(t *testing.T) {
 	s.NoteOn(60, 0.8)
 	s.NoteOn(64, 0.8)
 	s.NoteOn(67, 0.8)
+	s.Sustain(true)
 
-	if allocs := testing.AllocsPerRun(100, func() { s.Read(l, r) }); allocs != 0 {
+	if allocs := testing.AllocsPerRun(100, func() {
+		s.SetDrums(false)
+		s.Read(l, r)
+	}); allocs != 0 {
 		t.Fatalf("Read allocated %.1f times per call, want 0", allocs)
 	}
 }

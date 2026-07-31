@@ -92,7 +92,7 @@ func (pp PianoPanel) Render(b *element.Builder) (x any) {
 					b.Option("value", "").T("MIDI: none"),
 				),
 			),
-			b.SpanClass("piano-hint").T("Play: A S D F … (W E T Y U for sharps) · Z/X octave · click or drag"),
+			b.SpanClass("piano-hint").T("Play: A S D F … (W E T Y U for sharps) · Z/X octave · Space sustain · click or drag"),
 		),
 		b.DivClass("piano-keys", "id", "piano-keys").R(
 			b.Wrap(func() {

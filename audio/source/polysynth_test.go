@@ -46,6 +46,37 @@ func TestPolySynthNoteLifecycle(t *testing.T) {
 	}
 }
 
+// TestPolySynthSustainPedal verifies damper-pedal semantics: a key released
+// while the pedal is down keeps ringing (natural decay, not release), and
+// lifting the pedal finally releases it.
+func TestPolySynthSustainPedal(t *testing.T) {
+	p := NewPolySynth(48000, -12)
+	l, r := make([]float32, 256), make([]float32, 256)
+
+	p.Sustain(true)
+	p.NoteOn(60, 0.8)
+	p.Read(l, r)
+	p.NoteOff(60)
+
+	// 100 blocks ≈ 533 ms — far past the ~200 ms it takes a *released* voice
+	// to park (see TestPolySynthNoteLifecycle), but well inside middle C's
+	// multi-second natural decay. Still sounding here proves the pedal held it.
+	for range 100 {
+		p.Read(l, r)
+	}
+	if p.ActiveVoices() != 1 {
+		t.Fatalf("ActiveVoices = %d, want 1 (pedal should sustain past note-off)", p.ActiveVoices())
+	}
+
+	p.Sustain(false)
+	for range 100 {
+		p.Read(l, r)
+	}
+	if p.ActiveVoices() != 0 {
+		t.Fatalf("ActiveVoices = %d, want 0 after pedal up + release window", p.ActiveVoices())
+	}
+}
+
 func TestPolySynthVoiceStealing(t *testing.T) {
 	p := NewPolySynth(48000, -12)
 	l, r := make([]float32, 256), make([]float32, 256)

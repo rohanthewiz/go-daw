@@ -128,6 +128,7 @@ type SourceState struct {
 	LevelDB float64 `json:"levelDb,omitempty"`
 	Square  bool    `json:"square,omitempty"`
 	Program int     `json:"program,omitempty"` // sfont: GM program 0..127
+	Drums   bool    `json:"drums,omitempty"`   // sfont: route notes to the GM percussion channel
 }
 
 type ModuleState struct {
@@ -227,6 +228,7 @@ func captureSource(s source.Source) SourceState {
 			Type:    "sfont",
 			Path:    src.Path(),
 			Program: src.Program(),
+			Drums:   src.Drums(),
 			LevelDB: src.LevelDB.Get(),
 		}
 	case *source.LiveSource:
@@ -365,6 +367,11 @@ func (c *Console) SetChannelSource(ch *Channel, ss SourceState) error {
 		sf, err := source.NewSFSynth(ss.Path, c.SampleRate, level, ss.Program)
 		if err != nil {
 			return serr.Wrap(err, "channel", itoa(ch.ID))
+		}
+		if ss.Drums {
+			// Queued through the event ring; it drains on the first Read, so
+			// the synth is already in drum mode before any note can arrive.
+			sf.SetDrums(true)
 		}
 		ch.SetSource(sf)
 	case "live":

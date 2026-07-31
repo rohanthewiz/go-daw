@@ -167,6 +167,10 @@ func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 			// Program changes are live (queued through the synth's event ring),
 			// so switching instruments never rebuilds the source or drops notes.
 			src.SetProgram(int(req.Value))
+		case "sfont.drums":
+			// Live too: the toggle rides the ring, releasing sounding notes
+			// before rerouting to the GM percussion channel.
+			src.SetDrums(req.Value >= 0.5)
 		default:
 			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
 		}
@@ -213,6 +217,32 @@ func (srv *Server) noteHandler(ctx rweb.Context) error {
 	} else {
 		syn.NoteOff(req.Note)
 	}
+	return ok(ctx)
+}
+
+type pedalReq struct {
+	Down bool `json:"down"` // true = pedal pressed
+}
+
+// pedalHandler feeds sustain-pedal (CC64) events to the channel's instrument.
+// Separate from noteHandler because a pedal event has no note number and a
+// different capability check: sources opt in via Sustainer, not NotePlayer.
+func (srv *Server) pedalHandler(ctx rweb.Context) error {
+	ch, err := srv.channel(ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	req, err := decodeBody[pedalReq](ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	sus, canSustain := ch.Source().(source.Sustainer)
+	if !canSustain {
+		// 409 mirrors noteHandler: "this source can't do that" is a state
+		// conflict, not a malformed request.
+		return fail(ctx, serr.New("channel source has no sustain pedal", "channel", strconv.Itoa(ch.ID)), 409)
+	}
+	sus.Sustain(req.Down)
 	return ok(ctx)
 }
 

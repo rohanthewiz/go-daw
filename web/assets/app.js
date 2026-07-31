@@ -250,6 +250,16 @@
       tutNoteOff(note);
     }
 
+    // Sustain pedal (CC64). Client-side state gate: the space bar autorepeats
+    // and MIDI pedals stream continuous values, but the server only needs the
+    // down/up transitions.
+    var pedalDown = false;
+    function pedalSet(down) {
+      if (pedalDown === down) return;
+      pedalDown = down;
+      post("/api/channel/" + pianoCh() + "/pedal", { down: down });
+    }
+
     function setBase(nb) {
       base = Math.max(BASE_MIN, Math.min(BASE_MAX, nb));
       if (octLabel) octLabel.textContent = "C" + (base / 12 - 1);
@@ -320,6 +330,11 @@
     document.addEventListener("keydown", function (e) {
       if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e)) return;
       var k = e.key.toLowerCase();
+      if (k === " ") {
+        // preventDefault stops page scroll and re-clicking a focused button.
+        e.preventDefault();
+        return pedalSet(true);
+      }
       if (k === "z") return setBase(base - 12);
       if (k === "x") return setBase(base + 12);
       if (!(k in KEYMAP) || kbdHeld[k] !== undefined) return;
@@ -330,6 +345,7 @@
 
     document.addEventListener("keyup", function (e) {
       var k = e.key.toLowerCase();
+      if (k === " ") return pedalSet(false);
       if (kbdHeld[k] === undefined) return;
       noteOff(kbdHeld[k]);
       delete kbdHeld[k];
@@ -375,6 +391,7 @@
       function midiPanic() {
         Object.keys(midiHeld).forEach(function (n) { noteOff(parseInt(n, 10)); });
         midiHeld = {};
+        pedalSet(false); // an unplugged pedal can never send its own release
       }
 
       function onMIDIMessage(e) {
@@ -391,6 +408,10 @@
             delete midiHeld[note];
             noteOff(note);
           }
+        } else if (status === 0xb0 && note === 64) {
+          // CC64 sustain: hardware sends a continuous 0..127; ≥64 is the
+          // MIDI-standard "down" threshold. pedalSet dedupes the stream.
+          pedalSet(vel >= 64);
         }
       }
 

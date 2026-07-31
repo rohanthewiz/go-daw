@@ -24,3 +24,11 @@ type NotePlayer interface {
 	NoteOn(note int, vel float64) // velocity 0..1
 	NoteOff(note int)
 }
+
+// Sustainer is the damper-pedal surface (MIDI CC64). Kept separate from
+// NotePlayer so a future instrument without pedal semantics (a drum machine,
+// say) can still be played; handlers feature-detect with a type assertion.
+// Control plane, same ring discipline as note events.
+type Sustainer interface {
+	Sustain(down bool)
+}

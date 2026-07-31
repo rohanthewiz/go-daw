@@ -25,6 +25,12 @@ const (
 	synthVoices   = 16  // fixed pool; 17th simultaneous note steals the oldest voice
 	synthRingSize = 128 // power of two so index wrap is a cheap mask
 	synthRingMask = synthRingSize - 1
+
+	// synthEvPedal flags a sustain-pedal event on the ring; bit 0 carries the
+	// pedal state (1 = down). Bit 9 is free in packNote's layout (notes use
+	// bits 0..8 and 16..31), so pedal events ride the same ring as notes and
+	// ordering between "lift keys" and "lift pedal" is preserved.
+	synthEvPedal = 1 << 9
 )
 
 // Voice envelope states. A piano has no sustain segment: the note decays
@@ -40,6 +46,10 @@ type voice struct {
 	state int
 	note  int
 	held  bool // true until note-off; lets release target only held voices
+	// sustained marks a key released while the pedal was down: the release is
+	// deferred until pedal-up, and the note keeps its natural decay meanwhile —
+	// exactly what a damper pedal does on a real piano.
+	sustained bool
 
 	phase float64 // 0..1 cycle position, survives blocks (no phase clicks)
 	inc   float64 // phase increment per sample (freq / sampleRate)
@@ -61,8 +71,9 @@ type PolySynth struct {
 	head atomic.Uint64 // consumer (audio thread) read index
 	tail atomic.Uint64 // producer write index
 
-	voices [synthVoices]voice
-	ageCtr uint64 // audio-thread only
+	voices    [synthVoices]voice
+	ageCtr    uint64 // audio-thread only
+	pedalDown bool   // audio-thread only; current damper-pedal state
 
 	sampleRate  float64
 	attackStep  float64 // linear attack: ~3 ms to full level, fast like a hammer strike
@@ -112,6 +123,16 @@ func (p *PolySynth) NoteOn(note int, vel float64) { p.push(packNote(note, true, 
 // NoteOff queues a note-off. Control plane.
 func (p *PolySynth) NoteOff(note int) { p.push(packNote(note, false, 0)) }
 
+// Sustain queues a sustain-pedal change (down = pedal pressed). Control plane.
+// Implements Sustainer.
+func (p *PolySynth) Sustain(down bool) {
+	var ev uint64 = synthEvPedal
+	if down {
+		ev |= 1
+	}
+	p.push(ev)
+}
+
 func (p *PolySynth) push(ev uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -138,7 +159,12 @@ func (p *PolySynth) drainEvents() {
 	h := p.head.Load()
 	t := p.tail.Load()
 	for ; h < t; h++ {
-		note, on, vel := unpackNote(p.ring[h&synthRingMask].Load())
+		ev := p.ring[h&synthRingMask].Load()
+		if ev&synthEvPedal != 0 {
+			p.setPedal(ev&1 != 0)
+			continue
+		}
+		note, on, vel := unpackNote(ev)
 		if on {
 			p.noteOnVoice(note, vel)
 		} else {
@@ -181,6 +207,7 @@ func (p *PolySynth) noteOnVoice(note int, vel float64) {
 	}
 	v.note = note
 	v.held = true
+	v.sustained = false // re-struck or stolen voice is key-held again, not pedal-held
 	v.vel = vel
 	v.inc = midiToFreq(note) / p.sampleRate
 	// Attack ramps from the voice's *current* envelope, so re-strikes and
@@ -209,6 +236,29 @@ func (p *PolySynth) noteOffVoice(note int) {
 	for i := range p.voices {
 		if p.voices[i].held && p.voices[i].note == note {
 			p.voices[i].held = false
+			if p.pedalDown {
+				// Damper lifted from the string only when the pedal releases;
+				// meanwhile the voice stays in its current (attack/decay)
+				// state, ringing at the natural decay rate.
+				p.voices[i].sustained = true
+			} else {
+				p.voices[i].state = voiceRelease
+			}
+		}
+	}
+}
+
+// setPedal applies a pedal state change to the voice pool. Audio thread.
+func (p *PolySynth) setPedal(down bool) {
+	p.pedalDown = down
+	if down {
+		return
+	}
+	// Pedal up: every note whose key was already released now gets its
+	// deferred release. Held keys are untouched — they release on key-up.
+	for i := range p.voices {
+		if p.voices[i].sustained {
+			p.voices[i].sustained = false
 			p.voices[i].state = voiceRelease
 		}
 	}

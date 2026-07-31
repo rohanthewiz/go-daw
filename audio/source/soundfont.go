@@ -32,6 +32,17 @@ const (
 	// GM program number instead of a note. Kept out of the velocity bits so
 	// packNote's layout is reused untouched.
 	evProgram = 1 << 9
+
+	// evPedal flags a sustain-pedal event (MIDI CC64); bit 0 carries the
+	// pedal state (1 = down). Riding the ring rather than poking the synth
+	// keeps ordering with notes: "release keys, lift pedal" must apply in
+	// exactly that order or notes cut off early.
+	evPedal = 1 << 10
+
+	// evDrums flags a percussion-mode toggle; bit 0 carries the new state.
+	// Drums mode reroutes subsequent note events to MIDI channel 9, which
+	// meltysynth fixes to the bank's percussion presets (GM convention).
+	evDrums = 1 << 11
 )
 
 type SFSynth struct {
@@ -53,6 +64,16 @@ type SFSynth struct {
 	// display state, not audio state — the authoritative value lives in the
 	// synthesizer once the ring event drains.
 	program atomic.Int32
+
+	// drums mirrors the last requested percussion state for snapshots/UI —
+	// same display-only role as program. The audio-thread copy (drumsOn) is
+	// what actually routes notes, and it only changes via the ring.
+	drums atomic.Bool
+
+	// drumsOn is the audio thread's routing switch: false → melodic channel 0,
+	// true → percussion channel 9. Audio-thread-owned; never read or written
+	// by the control plane (that's what the drums atomic above is for).
+	drumsOn bool
 
 	path string // bank file path, for scene capture and the UI label
 }
@@ -147,6 +168,33 @@ func (s *SFSynth) SetProgram(program int) {
 // Program reports the last requested GM program (for snapshots/UI).
 func (s *SFSynth) Program() int { return int(s.program.Load()) }
 
+// Sustain queues a sustain-pedal change (down = pedal pressed). Control plane.
+// Implements Sustainer; meltysynth honors CC64 natively — voices whose keys
+// are released while the pedal is down keep ringing until it lifts.
+func (s *SFSynth) Sustain(down bool) {
+	var ev uint64 = evPedal
+	if down {
+		ev |= 1
+	}
+	s.push(ev)
+}
+
+// SetDrums queues a percussion-mode toggle. Control plane. When enabled, note
+// events target MIDI channel 9, so the keyboard plays the bank's GM drum kit
+// (note 36 = kick, 38 = snare, 42 = closed hat, …) instead of the melodic
+// program.
+func (s *SFSynth) SetDrums(on bool) {
+	s.drums.Store(on)
+	var ev uint64 = evDrums
+	if on {
+		ev |= 1
+	}
+	s.push(ev)
+}
+
+// Drums reports the last requested percussion state (for snapshots/UI).
+func (s *SFSynth) Drums() bool { return s.drums.Load() }
+
 // Path reports the bank file backing this synth (for scene capture).
 func (s *SFSynth) Path() string { return s.path }
 
@@ -167,20 +215,42 @@ func (s *SFSynth) drainEvents() {
 	t := s.tail.Load()
 	for ; h < t; h++ {
 		ev := s.ring[h&sfRingMask].Load()
-		if ev&evProgram != 0 {
-			// 0xC0 = MIDI program change; channel 0 is the only one we drive.
+		switch {
+		case ev&evProgram != 0:
+			// 0xC0 = MIDI program change; always the melodic channel — the
+			// percussion channel's presets are keyed by note, not program.
 			s.synth.ProcessMidiMessage(0, 0xC0, int32(ev&0xFF), 0)
-			continue
-		}
-		note, on, vel := unpackNote(ev)
-		if on {
-			// meltysynth expects MIDI 1..127; round-up keeps pianissimo
-			// touches (vel just above 0) audible instead of truncating to 0
-			// (which meltysynth treats as note-off).
-			v := int32(vel*126) + 1
-			s.synth.NoteOn(0, int32(note), v)
-		} else {
-			s.synth.NoteOff(0, int32(note))
+		case ev&evPedal != 0:
+			// 0xB0/64 = CC64 hold pedal. Melodic channel only: GM percussion
+			// is one-shot by convention, so sustaining it would just smear
+			// cymbal tails unnaturally.
+			var val int32
+			if ev&1 != 0 {
+				val = 127
+			}
+			s.synth.ProcessMidiMessage(0, 0xB0, 64, val)
+		case ev&evDrums != 0:
+			// Channel switch mid-hold would send note-offs to the wrong
+			// channel and strand notes; releasing everything first (with
+			// normal release tails, not a hard cut) makes the toggle safe at
+			// any moment.
+			s.synth.NoteOffAll(false)
+			s.drumsOn = ev&1 != 0
+		default:
+			ch := int32(0)
+			if s.drumsOn {
+				ch = 9 // GM percussion channel; meltysynth pins it to the drum bank
+			}
+			note, on, vel := unpackNote(ev)
+			if on {
+				// meltysynth expects MIDI 1..127; round-up keeps pianissimo
+				// touches (vel just above 0) audible instead of truncating to 0
+				// (which meltysynth treats as note-off).
+				v := int32(vel*126) + 1
+				s.synth.NoteOn(ch, int32(note), v)
+			} else {
+				s.synth.NoteOff(ch, int32(note))
+			}
 		}
 	}
 	s.head.Store(h)

@@ -1,0 +1,9 @@
+[
+  {
+    "id": "cd32367f6b5752f9",
+    "title": "Go-DAW low-hanging fruit",
+    "prompt": "4. MIDI file playback source via meltysynth.MidiFileSequencer. The dependency is already in go.mod, the source/rebuild plumbing pattern is fresh from the sfont work, and it gives you \"drop\n  a .mid in a folder, pick it on a channel, press play\" — a whole demo capability for one new source file plus a file-scan endpoint (the listSoundbanks() pattern copies directly).\n  5. Tutorial progress persistence in bytdb. The lesson checker already computes pass/miss counts; the scenes store shows the bytdb pattern. Saving best-per-lesson and showing a checkmark in\n  the catalog is mostly wiring.\n  6. Metronome/count-in. The tutorial's Listen mode already schedules timed notes; a click track is a trivial oscillator burst on the same clock, and it unblocks the \"timing-scored lessons\"\n  idea later.\n\n  Worth noting but bigger: the WebSocket note channel (latency only matters for remote play), native CoreMIDI input, and pitch bend/mod wheel are all real improvements but each is closer to a\n  full session than a quick win.",
+    "done": false,
+    "created": "2026-07-31T07:48:20.682622-05:00"
+  }
+]

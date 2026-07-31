@@ -71,6 +71,7 @@ func Start(cfg *config.Config, engine *audio.Engine, st *store.Store) error {
 	api.Post("/channel/:id/source", srv.channelSourceHandler)
 	api.Post("/channel/:id/source-param", srv.sourceParamHandler)
 	api.Post("/channel/:id/note", srv.noteHandler)
+	api.Post("/channel/:id/pedal", srv.pedalHandler)
 	api.Post("/channel/:id/group", srv.channelGroupHandler)
 	api.Post("/channel/:id/module/add", srv.moduleAddHandler)
 	api.Post("/channel/:id/module/remove", srv.moduleRemoveHandler)

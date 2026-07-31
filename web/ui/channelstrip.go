@@ -145,7 +145,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 	srcType := "none"
 	oscFreq, oscLevel := 220.0, -18.0
 	synthLevel := -12.0
-	sfontLevel, sfontPath, sfontProg := -6.0, "", 0
+	sfontLevel, sfontPath, sfontProg, sfontDrums := -6.0, "", 0, false
 	wavPath := ""
 	switch s := ch.Source().(type) {
 	case *source.Oscillator:
@@ -160,6 +160,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		sfontLevel = s.LevelDB.Get()
 		sfontPath = s.Path()
 		sfontProg = s.Program()
+		sfontDrums = s.Drums()
 	case *source.WavSource:
 		srcType = "wav"
 		wavPath = strings.TrimPrefix(s.Name(), "wav:")
@@ -225,6 +226,9 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 				}),
 			),
 			slider(b, "src", ch.ID, "sfont.level", "Lvl", -60, 0, 1, sfontLevel, ""),
+			// Drums reroutes notes to the GM percussion channel — a live
+			// source-param like program, so no rebuild/reload on toggle.
+			toggle(b, "src", ch.ID, "sfont.drums", "Drums", sfontDrums),
 		),
 		b.DivClass("src-wav", "data-id", id).R(
 			b.Input("type", "text", "placeholder", "path/to/file.wav",

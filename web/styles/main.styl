@@ -194,10 +194,23 @@ body
     border 1px solid line
     border-radius 3px
 
-.src-osc, .src-synth, .src-wav
+.src-osc, .src-synth, .src-sfont, .src-wav
   display none
   &[data-visible="1"]
     display block
+
+// Bank + instrument selects stack vertically: GM program names are long, and
+// a full-width row keeps them readable inside a narrow strip.
+.src-sfont
+  select
+    display block
+    width 100%
+    margin-bottom 3px
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+    font-size 10px
 
 .src-wav
   input[type="text"]

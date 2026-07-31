@@ -16,6 +16,8 @@ package main
 import (
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/rohanthewiz/go-daw/audio"
@@ -71,6 +73,21 @@ func main() {
 			con.Channels[2].SetName("Piano")
 		}
 	}
+	// Channel 4 gets a sampled piano when a SoundFont bank is on disk, so the
+	// difference between the additive synth (ch 3) and real samples is one
+	// piano-channel switch away. Failure just leaves the channel empty — a
+	// missing or corrupt bank must not block startup.
+	if len(con.Channels) >= 4 {
+		if bank := defaultSoundbank(cfg.SoundbanksDir); bank != "" {
+			if err := con.SetChannelSource(con.Channels[3], mixer.SourceState{
+				Type: "sfont", Path: bank,
+			}); err != nil {
+				logger.LogErr(err)
+			} else {
+				con.Channels[3].SetName("SF Piano")
+			}
+		}
+	}
 
 	if err := eng.Start(); err != nil {
 		logger.LogErr(err, "msg", "starting audio engine")
@@ -105,4 +122,27 @@ func main() {
 		st.Close()
 		os.Exit(1)
 	}
+}
+
+// defaultSoundbank picks the startup bank: GeneralUser GS when present (the
+// best quality-to-size GM bank, so the best default), otherwise the first
+// .sf2 found, otherwise "" (feature stays dormant until a bank is added).
+func defaultSoundbank(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "" // no soundbanks folder is a normal, silent case
+	}
+	first := ""
+	for _, e := range entries {
+		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".sf2") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(e.Name()), "generaluser") {
+			return filepath.Join(dir, e.Name())
+		}
+		if first == "" {
+			first = filepath.Join(dir, e.Name())
+		}
+	}
+	return first
 }

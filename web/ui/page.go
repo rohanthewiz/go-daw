@@ -9,10 +9,11 @@ import (
 
 // PageData carries everything the mixer page needs at render time.
 type PageData struct {
-	Console   *mixer.Console
-	Scenes    []store.SceneInfo
-	Recording bool
-	Duplex    bool
+	Console    *mixer.Console
+	Scenes     []store.SceneInfo
+	Recording  bool
+	Duplex     bool
+	Soundbanks []string // .sf2 paths offered in each channel's sfont selector
 }
 
 // MixerPage renders the complete console HTML document. The page is fully
@@ -46,6 +47,7 @@ func MixerPage(d PageData) string {
 								GroupCount:  len(d.Console.Groups),
 								ModuleNames: moduleNames,
 								Duplex:      d.Duplex,
+								Soundbanks:  d.Soundbanks,
 							})
 						}
 					}),

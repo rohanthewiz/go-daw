@@ -156,9 +156,36 @@
       var id = el.dataset.id, type = el.value;
       showSourceRows(id, type);
       if (type === "wav") return; // wait for the Load button with a path
-      post("/api/channel/" + id + "/source", { type: type }).then(function (r) {
+      var body = { type: type };
+      if (type === "sfont") {
+        // The bank select always has a value (the option is disabled when no
+        // banks exist), so the source can install immediately on selection.
+        var bankSel = document.querySelector('select[data-role="sfont-bank"][data-id="' + id + '"]');
+        var progSel = document.querySelector('select[data-role="sfont-program"][data-id="' + id + '"]');
+        if (!bankSel || !bankSel.value) return;
+        body.path = bankSel.value;
+        body.program = progSel ? parseInt(progSel.value, 10) : 0;
+      }
+      post("/api/channel/" + id + "/source", body).then(function (r) {
         if (r.ok) location.reload();
       });
+    }
+
+    // Bank switch = structural change (new sample set, new synthesizer), so it
+    // rebuilds the source and reloads. Program switch is live: it rides the
+    // synth's event ring and never interrupts sounding notes.
+    if (el.dataset.role === "sfont-bank") {
+      var sfId = el.dataset.id;
+      var sfProg = document.querySelector('select[data-role="sfont-program"][data-id="' + sfId + '"]');
+      post("/api/channel/" + sfId + "/source", {
+        type: "sfont",
+        path: el.value,
+        program: sfProg ? parseInt(sfProg.value, 10) : 0,
+      }).then(function (r) { if (r.ok) location.reload(); });
+    }
+    if (el.dataset.role === "sfont-program") {
+      post("/api/channel/" + el.dataset.id + "/source-param",
+        { name: "sfont.program", value: parseInt(el.value, 10) });
     }
 
     if (el.dataset.role === "group-select") {
@@ -175,9 +202,11 @@
   function showSourceRows(id, type) {
     var osc = document.querySelector('.src-osc[data-id="' + id + '"]');
     var syn = document.querySelector('.src-synth[data-id="' + id + '"]');
+    var sf = document.querySelector('.src-sfont[data-id="' + id + '"]');
     var wav = document.querySelector('.src-wav[data-id="' + id + '"]');
     if (osc) osc.dataset.visible = type === "osc" ? "1" : "0";
     if (syn) syn.dataset.visible = type === "synth" ? "1" : "0";
+    if (sf) sf.dataset.visible = type === "sfont" ? "1" : "0";
     if (wav) wav.dataset.visible = type === "wav" ? "1" : "0";
   }
 

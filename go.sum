@@ -20,6 +20,8 @@ github.com/rohanthewiz/rweb v0.1.26 h1:LLOrv+eaZXFAnGAPu4entbYt/ekRhwIetLmtzRYpB
 github.com/rohanthewiz/rweb v0.1.26/go.mod h1:NyLiaSzl2IiRuwRC9ciHrIE/VsXQ1Nx+F2LEL0iewqA=
 github.com/rohanthewiz/serr v1.4.0 h1:twQnnRRB3+orPJBrdVBaxaYScNE+Dk9MxSLtEabvoGA=
 github.com/rohanthewiz/serr v1.4.0/go.mod h1:l01AbjXw1zP0kxe5tX5s/sADHiBbl0Rwfo/igde4b88=
+github.com/sinshu/go-meltysynth v0.0.0-20230205031334-05d311382fc4 h1:VgeknFh4pciKVtwtjn9tZtItvV20x/+10NnUXKfyW6s=
+github.com/sinshu/go-meltysynth v0.0.0-20230205031334-05d311382fc4/go.mod h1:Afi/YpLztHvWSbiLFi6RgtxLLwmIiRmd/q7f3Ymed2g=
 github.com/sirupsen/logrus v1.9.4 h1:TsZE7l11zFCLZnZ+teH4Umoq5BhEIfIzfRDZ1Uzql2w=
 github.com/sirupsen/logrus v1.9.4/go.mod h1:ftWc9WdOfJ0a92nsE2jF5u5ZwH8Bv2zdeOC42RjbV2g=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=

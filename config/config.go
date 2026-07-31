@@ -26,6 +26,7 @@ type Config struct {
 	DBPath        string `json:"dbPath"`        // bytdb scene store file
 	RecordingsDir string `json:"recordingsDir"` // bounced WAVs land here
 	PluginsDir    string `json:"pluginsDir"`    // *.so audio modules are loaded from here
+	SoundbanksDir string `json:"soundbanksDir"` // *.sf2 SoundFont banks offered in the UI
 }
 
 // defaults returns the baseline config. 48kHz/256-frame blocks is the sweet
@@ -42,6 +43,7 @@ func defaults() Config {
 		DBPath:        "godaw.db",
 		RecordingsDir: "recordings",
 		PluginsDir:    "plugins",
+		SoundbanksDir: "soundbanks",
 	}
 }
 

@@ -2,7 +2,10 @@ package web
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/rohanthewiz/go-daw/audio/source"
 	"github.com/rohanthewiz/go-daw/mixer"
@@ -52,12 +55,38 @@ func (srv *Server) pageHandler(ctx rweb.Context) error {
 		logger.LogErr(err, "msg", "listing scenes for page; continuing with none")
 	}
 	html := ui.MixerPage(ui.PageData{
-		Console:   srv.engine.Console,
-		Scenes:    scenes,
-		Recording: srv.engine.Recorder() != nil,
-		Duplex:    srv.engine.Duplex,
+		Console:    srv.engine.Console,
+		Scenes:     scenes,
+		Recording:  srv.engine.Recorder() != nil,
+		Duplex:     srv.engine.Duplex,
+		Soundbanks: srv.listSoundbanks(),
 	})
 	return ctx.WriteHTML(html)
+}
+
+// listSoundbanks scans the configured directory for .sf2 files. Scanned per
+// page render (not cached) so dropping a new bank into the folder shows up on
+// the next reload without a restart; the directory holds a handful of files,
+// so the ReadDir cost is noise.
+func (srv *Server) listSoundbanks() (banks []string) {
+	entries, err := os.ReadDir(srv.cfg.SoundbanksDir)
+	if err != nil {
+		logger.LogErr(serr.Wrap(err, "dir", srv.cfg.SoundbanksDir), "msg", "scanning soundbanks; offering none")
+		return nil
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".sf2") {
+			continue
+		}
+		banks = append(banks, filepath.Join(srv.cfg.SoundbanksDir, e.Name()))
+	}
+	return banks
+}
+
+// soundfontsHandler exposes the bank list to the client (used after structural
+// changes without a full page reload).
+func (srv *Server) soundfontsHandler(ctx rweb.Context) error {
+	return ctx.WriteJSON(srv.listSoundbanks())
 }
 
 func (srv *Server) stateHandler(ctx rweb.Context) error {
@@ -130,6 +159,17 @@ func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 		default:
 			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
 		}
+	case *source.SFSynth:
+		switch req.Name {
+		case "sfont.level":
+			src.LevelDB.Set(req.Value)
+		case "sfont.program":
+			// Program changes are live (queued through the synth's event ring),
+			// so switching instruments never rebuilds the source or drops notes.
+			src.SetProgram(int(req.Value))
+		default:
+			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
+		}
 	default:
 		return fail(ctx, serr.New("channel source has no adjustable parameters"), 400)
 	}
@@ -160,7 +200,9 @@ func (srv *Server) noteHandler(ctx rweb.Context) error {
 	if req.Note < 0 || req.Note > 127 {
 		return fail(ctx, serr.New("note out of range", "note", strconv.Itoa(req.Note)), 400)
 	}
-	syn, isSynth := ch.Source().(*source.PolySynth)
+	// Any NotePlayer will do — PolySynth and SFSynth share the interface, so
+	// the piano/tutorial work identically over either instrument.
+	syn, isSynth := ch.Source().(source.NotePlayer)
 	if !isSynth {
 		// 409 (not 400) so the client can distinguish "wrong source type" —
 		// e.g. someone swapped the source mid-performance — from a bad request.

@@ -2,3 +2,4 @@ godaw
 godaw.db*
 recordings/
 plugins/*.so
+soundbanks/*.sf2

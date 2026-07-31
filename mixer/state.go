@@ -122,11 +122,12 @@ type ReverbState struct {
 }
 
 type SourceState struct {
-	Type    string  `json:"type"` // "none" | "osc" | "wav" | "live" | "synth"
-	Path    string  `json:"path,omitempty"`
+	Type    string  `json:"type"`           // "none" | "osc" | "wav" | "live" | "synth" | "sfont"
+	Path    string  `json:"path,omitempty"` // wav: audio file; sfont: .sf2 bank file
 	FreqHz  float64 `json:"freqHz,omitempty"`
 	LevelDB float64 `json:"levelDb,omitempty"`
 	Square  bool    `json:"square,omitempty"`
+	Program int     `json:"program,omitempty"` // sfont: GM program 0..127
 }
 
 type ModuleState struct {
@@ -219,6 +220,15 @@ func captureSource(s source.Source) SourceState {
 	case *source.PolySynth:
 		// Note state is performance, not mix — only the level is scene-worthy.
 		return SourceState{Type: "synth", LevelDB: src.LevelDB.Get()}
+	case *source.SFSynth:
+		// Same reasoning as synth, plus the bank path and instrument so a
+		// recalled scene comes back with the exact same sound.
+		return SourceState{
+			Type:    "sfont",
+			Path:    src.Path(),
+			Program: src.Program(),
+			LevelDB: src.LevelDB.Get(),
+		}
 	case *source.LiveSource:
 		return SourceState{Type: "live"}
 	default:
@@ -341,6 +351,22 @@ func (c *Console) SetChannelSource(ch *Channel, ss SourceState) error {
 			return serr.Wrap(err, "channel", itoa(ch.ID))
 		}
 		ch.SetSource(ws)
+	case "sfont":
+		if ss.Path == "" {
+			return serr.New("soundfont source requires a bank path", "channel", itoa(ch.ID))
+		}
+		level := ss.LevelDB
+		if level == 0 {
+			// Zero doubles as "unset" (JSON omitempty). SF2 banks are already
+			// conservatively mixed and meltysynth's master volume sits at 0.5,
+			// so only a light trim is needed for chord headroom.
+			level = -6
+		}
+		sf, err := source.NewSFSynth(ss.Path, c.SampleRate, level, ss.Program)
+		if err != nil {
+			return serr.Wrap(err, "channel", itoa(ch.ID))
+		}
+		ch.SetSource(sf)
 	case "live":
 		ch.SetSource(source.NewLive(c.LiveFeed))
 	case "none", "":

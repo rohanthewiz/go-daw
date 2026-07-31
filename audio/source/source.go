@@ -13,3 +13,14 @@ type Source interface {
 	Read(l, r []float32) int
 	Name() string // human label for the UI, e.g. "osc", "wav:kick.wav", "live"
 }
+
+// NotePlayer is the note-event surface shared by playable sources (PolySynth,
+// SFSynth). The piano UI and tutorial target this interface rather than a
+// concrete synth, so swapping the additive synth for a SoundFont bank — or
+// any future instrument — needs no handler changes. Both methods are control
+// plane: implementations queue into lock-free rings, never touching the audio
+// thread directly.
+type NotePlayer interface {
+	NoteOn(note int, vel float64) // velocity 0..1
+	NoteOff(note int)
+}

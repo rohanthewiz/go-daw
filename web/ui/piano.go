@@ -45,12 +45,13 @@ func isBlackKey(semitone int) bool {
 }
 
 func (pp PianoPanel) Render(b *element.Builder) (x any) {
-	// Preselect the first channel already running a synth so the piano is
-	// playable immediately; other channels are offered but flagged, since
+	// Preselect the first channel already running a playable instrument
+	// (additive synth or SoundFont — anything implementing NotePlayer) so the
+	// piano works immediately; other channels are offered but flagged, since
 	// choosing one installs a synth on it (handled in app.js).
 	selectedID := 0
 	for _, ch := range pp.Console.Channels {
-		if _, isSynth := ch.Source().(*source.PolySynth); isSynth {
+		if _, playable := ch.Source().(source.NotePlayer); playable {
 			selectedID = ch.ID
 			break
 		}
@@ -63,10 +64,10 @@ func (pp PianoPanel) Render(b *element.Builder) (x any) {
 			b.Select("id", "piano-channel").R(
 				b.Wrap(func() {
 					for _, ch := range pp.Console.Channels {
-						_, isSynth := ch.Source().(*source.PolySynth)
+						_, playable := ch.Source().(source.NotePlayer)
 						label := strconv.Itoa(ch.ID) + " · " + ch.Name()
 						attrs := []string{"value", strconv.Itoa(ch.ID)}
-						if isSynth {
+						if playable {
 							attrs = append(attrs, "data-synth", "1")
 						} else {
 							label += " (→ synth)"

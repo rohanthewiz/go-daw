@@ -10,6 +10,7 @@ require (
 	github.com/rohanthewiz/logger v1.3.0
 	github.com/rohanthewiz/rweb v0.1.26
 	github.com/rohanthewiz/serr v1.4.0
+	github.com/sinshu/go-meltysynth v0.0.0-20230205031334-05d311382fc4
 )
 
 require (

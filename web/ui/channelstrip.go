@@ -20,6 +20,7 @@ type ChannelStrip struct {
 	GroupCount  int
 	ModuleNames []string
 	Duplex      bool
+	Soundbanks  []string // .sf2 paths for the sfont source selector
 }
 
 // Render satisfies element.Component.
@@ -144,6 +145,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 	srcType := "none"
 	oscFreq, oscLevel := 220.0, -18.0
 	synthLevel := -12.0
+	sfontLevel, sfontPath, sfontProg := -6.0, "", 0
 	wavPath := ""
 	switch s := ch.Source().(type) {
 	case *source.Oscillator:
@@ -153,6 +155,11 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 	case *source.PolySynth:
 		srcType = "synth"
 		synthLevel = s.LevelDB.Get()
+	case *source.SFSynth:
+		srcType = "sfont"
+		sfontLevel = s.LevelDB.Get()
+		sfontPath = s.Path()
+		sfontProg = s.Program()
 	case *source.WavSource:
 		srcType = "wav"
 		wavPath = strings.TrimPrefix(s.Name(), "wav:")
@@ -164,12 +171,18 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		b.Label().T("Src"),
 		b.Select("data-role", "source-select", "data-id", id).R(
 			b.Wrap(func() {
-				for _, opt := range []string{"none", "osc", "synth", "live", "wav"} {
+				for _, opt := range []string{"none", "osc", "synth", "sfont", "live", "wav"} {
 					attrs := []string{"value", opt}
 					if opt == srcType {
 						attrs = append(attrs, "selected", "selected")
 					}
 					if opt == "live" && !cs.Duplex {
+						attrs = append(attrs, "disabled", "disabled")
+					}
+					// No banks on disk means sfont can't be built; disabling
+					// (rather than hiding) advertises the feature and hints at
+					// the fix — drop an .sf2 into the soundbanks folder.
+					if opt == "sfont" && len(cs.Soundbanks) == 0 {
 						attrs = append(attrs, "disabled", "disabled")
 					}
 					b.Option(attrs...).T(opt)
@@ -183,6 +196,35 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		),
 		b.DivClass("src-synth", "data-id", id).R(
 			slider(b, "src", ch.ID, "synth.level", "Lvl", -60, 0, 1, synthLevel, ""),
+		),
+		// SoundFont sub-controls: bank + instrument selects and a level trim.
+		// Bank changes rebuild the source (new sample set → new synthesizer);
+		// program changes are live events into the running synth, so the two
+		// selects deliberately carry different data-roles.
+		b.DivClass("src-sfont", "data-id", id).R(
+			b.Select("data-role", "sfont-bank", "data-id", id, "title", "SoundFont bank").R(
+				b.Wrap(func() {
+					for _, bank := range cs.Soundbanks {
+						attrs := []string{"value", bank}
+						if bank == sfontPath {
+							attrs = append(attrs, "selected", "selected")
+						}
+						b.Option(attrs...).T(sfontBaseName(bank))
+					}
+				}),
+			),
+			b.Select("data-role", "sfont-program", "data-id", id, "title", "GM instrument").R(
+				b.Wrap(func() {
+					for p, name := range gmPrograms {
+						attrs := []string{"value", strconv.Itoa(p)}
+						if p == sfontProg {
+							attrs = append(attrs, "selected", "selected")
+						}
+						b.Option(attrs...).T(strconv.Itoa(p) + " · " + name)
+					}
+				}),
+			),
+			slider(b, "src", ch.ID, "sfont.level", "Lvl", -60, 0, 1, sfontLevel, ""),
 		),
 		b.DivClass("src-wav", "data-id", id).R(
 			b.Input("type", "text", "placeholder", "path/to/file.wav",

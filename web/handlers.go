@@ -63,6 +63,9 @@ func (srv *Server) pageHandler(ctx rweb.Context) error {
 		MidiFiles:  srv.listMidiFiles(),
 		MetroBPM:   srv.setting("metro.bpm", "120"),
 		MetroBeats: srv.setting("metro.beats", "4"),
+		// Default on: the count-in is the pedagogically safer choice, so a
+		// fresh profile gets it and only an explicit uncheck persists "0".
+		TutCountIn: srv.setting("tut.countin", "1") != "0",
 	})
 	return ctx.WriteHTML(html)
 }
@@ -631,6 +634,15 @@ var settingValidators = map[string]func(value string) error{
 			return nil
 		}
 		return serr.New("beats-per-bar not offered by the meter selector", "beats", value)
+	},
+	"tut.countin": func(value string) error {
+		// Booleans persist as "0"/"1" strings — the settings table is TEXT by
+		// design (values are read singly by name, never aggregated in SQL).
+		switch value {
+		case "0", "1":
+			return nil
+		}
+		return serr.New("count-in flag must be 0 or 1", "value", value)
 	},
 }
 

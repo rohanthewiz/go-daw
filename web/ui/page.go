@@ -17,6 +17,7 @@ type PageData struct {
 	MidiFiles  []string // .mid paths offered in each channel's midi selector
 	MetroBPM   string   // persisted metronome tempo, already validated/defaulted
 	MetroBeats string   // persisted beats-per-bar, already validated/defaulted
+	TutCountIn bool     // persisted tutorial count-in preference (default on)
 }
 
 // MixerPage renders the complete console HTML document. The page is fully
@@ -69,7 +70,7 @@ func MixerPage(d PageData) string {
 			),
 
 			element.RenderComponents(b, PianoPanel{Console: d.Console}),
-			element.RenderComponents(b, TutorialPanel{}),
+			element.RenderComponents(b, TutorialPanel{CountIn: d.TutCountIn}),
 
 			b.Script("src", "/assets/app.js").R(),
 		),

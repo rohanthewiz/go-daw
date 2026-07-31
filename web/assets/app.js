@@ -699,7 +699,14 @@
     // matching the metronome's bar-start voicing. Timers ride demoTimers so
     // Stop (or switching lessons) cancels a pending count-in exactly the way
     // it silences a demo.
+    //
+    // The toggle is read here (not at the call sites) so both Start and
+    // Listen honor it through one gate; when off, done() runs synchronously —
+    // the lesson arms on the same click, nothing pending to cancel.
+    var tutCountBox = document.getElementById("tut-countin");
+
     function countIn(n, intervalMs, done) {
+      if (tutCountBox && !tutCountBox.checked) return done();
       for (var i = 0; i < n; i++) {
         (function (i) {
           demoTimers.push(setTimeout(function () {
@@ -862,6 +869,12 @@
         stopDemo();
         clearGuides();
         previewLesson();
+      });
+      // Persist the count-in preference the moment it's toggled. No debounce
+      // (checkboxes fire one change per click) and no reload — the server
+      // renders it back on the next page load, metronome-settings style.
+      if (tutCountBox) tutCountBox.addEventListener("change", function () {
+        post("/api/setting", { key: "tut.countin", value: tutCountBox.checked ? "1" : "0" });
       });
       document.getElementById("tut-start").addEventListener("click", startLesson);
       document.getElementById("tut-demo").addEventListener("click", playDemo);

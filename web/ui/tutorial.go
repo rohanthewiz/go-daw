@@ -14,10 +14,12 @@ import (
 // notes from every input route (mouse, computer keyboard, MIDI), and drives
 // the Listen demo through the same note API as live play.
 //
-//	┌ TUTORIAL  [lesson ▾] [Start] [Listen] [Stop]  3/14 · 1 missed   desc ┐
-//	│ (C)(C)(G)(G)(A)(A)(G)(F)(F)(E)(E)(D)(D)(C)   ← step chips, scrolls   │
-//	└───────────────────────────────────────────────────────────────────────┘
-type TutorialPanel struct{}
+//	┌ TUTORIAL  [lesson ▾] [Start] [Listen] [Stop] [✓ Count-in]  3/14 · 1 missed   desc ┐
+//	│ (C)(C)(G)(G)(A)(A)(G)(F)(F)(E)(E)(D)(D)(C)   ← step chips, scrolls              │
+//	└───────────────────────────────────────────────────────────────────────────────────┘
+type TutorialPanel struct {
+	CountIn bool // render the count-in toggle checked (persisted preference)
+}
 
 func (tp TutorialPanel) Render(b *element.Builder) (x any) {
 	b.DivClass("tutorial", "id", "tutorial").R(
@@ -36,6 +38,20 @@ func (tp TutorialPanel) Render(b *element.Builder) (x any) {
 			b.Button("id", "tut-start", "title", "Begin the lesson").T("Start"),
 			b.Button("id", "tut-demo", "title", "Hear the lesson played on the synth").T("Listen"),
 			b.Button("id", "tut-stop", "title", "Stop the lesson or demo").T("Stop"),
+			// The persisted state renders server-side (checked attr) like the
+			// metronome inputs, so the toggle never flashes a default; app.js
+			// reads it at Start/Listen time and persists changes.
+			b.LabelClass("tut-countin", "title",
+				"Play four pacing clicks before a lesson or demo begins").R(
+				b.Wrap(func() {
+					attrs := []string{"type", "checkbox", "id", "tut-countin"}
+					if tp.CountIn {
+						attrs = append(attrs, "checked", "checked")
+					}
+					b.Input(attrs...).R()
+				}),
+				b.T("Count-in"),
+			),
 			b.SpanClass("tut-progress", "id", "tut-progress").R(),
 			b.SpanClass("tut-msg", "id", "tut-msg").R(),
 		),

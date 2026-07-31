@@ -48,6 +48,10 @@ type Engine struct {
 	// every block.
 	recorder atomic.Pointer[record.Recorder]
 
+	// click is the metronome tick generator; triggered from the control
+	// plane, rendered by the callback into the monitor path only.
+	click *clickGen
+
 	// interleaved scratch for the master output + recorder push
 	outScratch []float32
 }
@@ -58,6 +62,7 @@ func NewEngine(cfg *config.Config) *Engine {
 	return &Engine{
 		Console:    mixer.NewConsole(cfg.ChannelCount, cfg.GroupCount, float64(cfg.SampleRate), maxBlock),
 		cfg:        cfg,
+		click:      newClickGen(float64(cfg.SampleRate)),
 		outScratch: make([]float32, maxBlock*2),
 	}
 }
@@ -172,6 +177,11 @@ func (e *Engine) StopRecording() (string, float64, error) {
 // Recorder returns the active recorder or nil.
 func (e *Engine) Recorder() *record.Recorder { return e.recorder.Load() }
 
+// TriggerClick queues one metronome click (accent = bar-start voicing). The
+// browser owns the tempo clock and calls this once per beat; the engine only
+// makes the sound, at the next block boundary (≤ one period of latency).
+func (e *Engine) TriggerClick(accent bool) { e.click.Trigger(accent) }
+
 // onData is the miniaudio data callback — the engine's heartbeat, running
 // on the CoreAudio realtime thread. pIn is nil in playback-only mode.
 func (e *Engine) onData(pOut, pIn []byte, frameCount uint32) {
@@ -249,7 +259,12 @@ func (e *Engine) processBlock(outAll, inAll []float32, offset, n int) {
 		rec.Push(out)
 	}
 
-	// 7) Hand the block to the device.
+	// 7) Metronome click, deliberately after the recorder tap: the click is
+	//    a monitoring aid the player hears but a bounce never contains —
+	//    standard DAW behavior, and it spares takes from click bleed.
+	e.click.Render(out, n)
+
+	// 8) Hand the block to the device.
 	copy(outAll[offset*2:(offset+n)*2], out)
 }
 

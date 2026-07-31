@@ -27,6 +27,26 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 		}),
 		b.SpanClass("rec-time", "id", "rec-time").T(""),
 
+		// Metronome: the browser schedules the beats (app.js) and each one
+		// POSTs /api/click; the engine renders the tick into the monitor
+		// path only, so the click is never printed to a recording. Rendered
+		// as plain controls with ids (not data-param) so the generic
+		// parameter dispatcher leaves them alone.
+		b.DivClass("metro-box").R(
+			b.ButtonClass("metro-btn", "id", "metro-btn",
+				"title", "Metronome on/off").T("◆ CLICK"),
+			b.Input("type", "number", "id", "metro-bpm",
+				"min", "30", "max", "300", "step", "1", "value", "120",
+				"title", "Beats per minute").R(),
+			b.SpanClass("metro-label").T("bpm"),
+			b.Select("id", "metro-beats", "title", "Beats per bar").R(
+				b.Option("value", "2").T("2/4"),
+				b.Option("value", "3").T("3/4"),
+				b.Option("value", "4", "selected", "selected").T("4/4"),
+				b.Option("value", "6").T("6/8"),
+			),
+		),
+
 		b.DivClass("scene-box").R(
 			b.Input("type", "text", "id", "scene-name", "placeholder", "scene name").R(),
 			b.Button("id", "scene-save").T("Save"),

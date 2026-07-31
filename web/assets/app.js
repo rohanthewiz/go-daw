@@ -640,22 +640,52 @@
       if (isFinite(min)) setBase(Math.floor(min / 12) * 12);
     }
 
+    // Count-in pace: the lesson's own first-step duration, clamped so chord
+    // lessons (900ms holds) don't produce a glacial count and nothing gets
+    // faster than a brisk practice tempo.
+    function countInMs(lesson) {
+      var ms = (lesson.steps[0] && lesson.steps[0].ms) || 400;
+      return Math.max(300, Math.min(700, ms));
+    }
+
+    // Count-in: n clicks before a lesson arms or a demo plays, so the pace is
+    // in the player's ear before the first note. The first beat is accented,
+    // matching the metronome's bar-start voicing. Timers ride demoTimers so
+    // Stop (or switching lessons) cancels a pending count-in exactly the way
+    // it silences a demo.
+    function countIn(n, intervalMs, done) {
+      for (var i = 0; i < n; i++) {
+        (function (i) {
+          demoTimers.push(setTimeout(function () {
+            post("/api/click", { accent: i === 0 });
+            tutMsg.textContent = "Count-in… " + (n - i);
+          }, i * intervalMs));
+        })(i);
+      }
+      demoTimers.push(setTimeout(done, n * intervalMs));
+    }
+
     function startLesson() {
       var lesson = tutLesson();
       if (!lesson) return;
       stopDemo();
-      tutActive = true;
-      tutStep = 0;
-      tutMisses = 0;
-      tutHeld = {};
+      tutActive = false; // arms only after the count-in completes
+      clearGuides();
       fitBase(lesson);
       buildStrip(lesson);
-      stripCursor(0);
-      guideStep();
-      paintTutProgress();
-      tutMsg.textContent = lesson.steps[0].notes.length > 1
-        ? "Hold every ringed key at once"
-        : "Play the ringed key";
+      stripCursor(-1);
+      countIn(4, countInMs(lesson), function () {
+        tutActive = true;
+        tutStep = 0;
+        tutMisses = 0;
+        tutHeld = {};
+        stripCursor(0);
+        guideStep();
+        paintTutProgress();
+        tutMsg.textContent = lesson.steps[0].notes.length > 1
+          ? "Hold every ringed key at once"
+          : "Play the ringed key";
+      });
     }
 
     function tutAdvance() {
@@ -695,25 +725,27 @@
       clearGuides();
       fitBase(lesson);
       buildStrip(lesson);
-      demoOn = true;
-      tutMsg.textContent = "Listen…";
-      var t = 0;
-      lesson.steps.forEach(function (s, i) {
-        var dur = s.ms || 400;
+      demoOn = true; // spans the count-in too, keeping stray play out of the checker
+      countIn(4, countInMs(lesson), function () {
+        tutMsg.textContent = "Listen…";
+        var t = 0;
+        lesson.steps.forEach(function (s, i) {
+          var dur = s.ms || 400;
+          demoTimers.push(setTimeout(function () {
+            stripCursor(i);
+            s.notes.forEach(function (n) { demoSounding[n] = true; noteOn(n, 0.7); });
+          }, t));
+          demoTimers.push(setTimeout(function () {
+            s.notes.forEach(function (n) { delete demoSounding[n]; noteOff(n); });
+          }, t + dur - 80));
+          t += dur;
+        });
         demoTimers.push(setTimeout(function () {
-          stripCursor(i);
-          s.notes.forEach(function (n) { demoSounding[n] = true; noteOn(n, 0.7); });
+          demoOn = false;
+          stripCursor(-1);
+          tutMsg.textContent = lesson.desc + " Press Start to try it.";
         }, t));
-        demoTimers.push(setTimeout(function () {
-          s.notes.forEach(function (n) { delete demoSounding[n]; noteOff(n); });
-        }, t + dur - 80));
-        t += dur;
       });
-      demoTimers.push(setTimeout(function () {
-        demoOn = false;
-        stripCursor(-1);
-        tutMsg.textContent = lesson.desc + " Press Start to try it.";
-      }, t));
     }
 
     function stopTutorial() {
@@ -749,6 +781,58 @@
       document.getElementById("tut-stop").addEventListener("click", stopTutorial);
     }
   }
+
+  // ---- metronome -----------------------------------------------------------
+  // Browser-side clock, server-side sound: each beat POSTs /api/click and the
+  // engine mixes a short sine burst into the monitor path (clicks never land
+  // in recordings). The setTimeout chain re-anchors against performance.now()
+  // every beat, so per-beat jitter never accumulates into tempo drift — the
+  // same display-grade clock family as the tutorial's Listen mode, which is
+  // plenty for practice use:
+  //
+  //   metroNext ──►│ beat │←── 60000/bpm ──►│ beat │ ...
+  //   setTimeout(tick, metroNext - now)  // late fire shortens the NEXT wait
+
+  var metroBtn = document.getElementById("metro-btn");
+  var metroBpm = document.getElementById("metro-bpm");
+  var metroBeats = document.getElementById("metro-beats");
+  var metroOn = false, metroTimer = null, metroBeat = 0, metroNext = 0;
+
+  function metroIntervalMs() {
+    var bpm = parseFloat(metroBpm.value);
+    if (!isFinite(bpm)) bpm = 120;
+    return 60000 / Math.max(30, Math.min(300, bpm));
+  }
+
+  function metroTick() {
+    if (!metroOn) return;
+    var per = parseInt(metroBeats.value, 10) || 4;
+    var accent = metroBeat % per === 0;
+    post("/api/click", { accent: accent });
+    // Beat flash on the button doubles as a silent visual metronome; two
+    // strengths mirror the accented/plain sounds.
+    metroBtn.dataset.beat = accent ? "1" : "2";
+    setTimeout(function () { metroBtn.removeAttribute("data-beat"); }, 110);
+    metroBeat++;
+    // Tempo and meter are re-read every beat, so edits take effect within a
+    // beat of typing them — no stop/start needed, no mid-bar stutter.
+    metroNext += metroIntervalMs();
+    metroTimer = setTimeout(metroTick, Math.max(0, metroNext - performance.now()));
+  }
+
+  if (metroBtn) metroBtn.addEventListener("click", function () {
+    if (metroOn) {
+      metroOn = false;
+      metroBtn.dataset.on = "0";
+      clearTimeout(metroTimer);
+    } else {
+      metroOn = true;
+      metroBtn.dataset.on = "1";
+      metroBeat = 0; // always restart on the accent
+      metroNext = performance.now();
+      metroTick();
+    }
+  });
 
   // ---- meters via SSE ------------------------------------------------------
 

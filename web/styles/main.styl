@@ -76,6 +76,51 @@ body
   &[data-live="1"]
     color green
 
+// ---- metronome ----
+.metro-box
+  display flex
+  align-items center
+  gap 6px
+  select
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+
+.metro-btn
+  background panel2
+  color inkDim
+  border 1px solid line
+  border-radius 4px
+  padding 4px 10px
+  cursor pointer
+  &[data-on="1"]
+    background #4a3b16
+    color amber
+    border-color #6b5620
+  // Beat flash, two strengths mirroring the accent/plain click sounds.
+  // These rules sit after data-on so a running metronome's flash wins.
+  &[data-beat="1"]
+    background amber
+    color #16181d
+  &[data-beat="2"]
+    background #6b5620
+    color #f5e6bd
+
+#metro-bpm
+  width 56px
+  background panel2
+  color ink
+  border 1px solid line
+  border-radius 3px
+  padding 3px 4px
+  font inherit
+
+.metro-label
+  color inkDim
+  font-size 10px
+  margin-left -2px
+
 // ---- console layout ----
 .console
   display flex

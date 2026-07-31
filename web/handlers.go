@@ -543,6 +543,25 @@ func (srv *Server) recordStopHandler(ctx rweb.Context) error {
 	return ctx.WriteJSON(map[string]any{"path": path, "seconds": seconds})
 }
 
+// ---- metronome ----
+
+type clickReq struct {
+	Accent bool `json:"accent"` // true = bar-start click (higher, louder)
+}
+
+// clickHandler fires one metronome click. The browser owns the tempo clock
+// (the same setTimeout scheduling family the tutorial's Listen mode uses),
+// so like notes this is a discrete event with its own route, not a debounced
+// parameter — every beat matters and ordering must hold.
+func (srv *Server) clickHandler(ctx rweb.Context) error {
+	req, err := decodeBody[clickReq](ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	srv.engine.TriggerClick(req.Accent)
+	return ok(ctx)
+}
+
 func clamp(v, lo, hi float64) float64 {
 	if v < lo {
 		return lo

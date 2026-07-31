@@ -543,6 +543,39 @@ func (srv *Server) recordStopHandler(ctx rweb.Context) error {
 	return ctx.WriteJSON(map[string]any{"path": path, "seconds": seconds})
 }
 
+// ---- tutorial progress ----
+
+type lessonPassReq struct {
+	Lesson string `json:"lesson"` // lesson name (the stable identity, not catalog index)
+	Misses int    `json:"misses"` // wrong-note count for this completed run
+}
+
+// tutorialPassHandler records one completed lesson run. Posted by the client
+// only at the moment a lesson finishes, so unlike faders there is nothing to
+// debounce — each post is a discrete achievement.
+func (srv *Server) tutorialPassHandler(ctx rweb.Context) error {
+	req, err := decodeBody[lessonPassReq](ctx)
+	if err != nil || req.Lesson == "" {
+		return fail(ctx, serr.New("lesson name required"), 400)
+	}
+	if req.Misses < 0 {
+		return fail(ctx, serr.New("misses cannot be negative"), 400)
+	}
+	if err := srv.store.RecordLessonPass(req.Lesson, req.Misses); err != nil {
+		return fail(ctx, err, 500)
+	}
+	logger.Info("Lesson completed", "lesson", req.Lesson, "misses", strconv.Itoa(req.Misses))
+	return ok(ctx)
+}
+
+func (srv *Server) tutorialProgressHandler(ctx rweb.Context) error {
+	list, err := srv.store.ListProgress()
+	if err != nil {
+		return fail(ctx, err, 500)
+	}
+	return ctx.WriteJSON(list)
+}
+
 // ---- metronome ----
 
 type clickReq struct {

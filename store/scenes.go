@@ -42,6 +42,10 @@ func Open(path string) (*Store, error) {
 		eng.Close()
 		return nil, serr.Wrap(err)
 	}
+	if err := s.migrateProgress(); err != nil {
+		eng.Close()
+		return nil, serr.Wrap(err)
+	}
 	logger.Info("Scene store ready", "path", path)
 	return s, nil
 }

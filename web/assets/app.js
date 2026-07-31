@@ -527,6 +527,9 @@
     var tutMsg = document.getElementById("tut-msg");
 
     var tutLessons = [];   // catalog fetched once at page load
+    var tutProgress = {};  // lesson name -> {completions, bestMisses, lastMisses};
+                           // seeded from /api/tutorial/progress, updated locally on
+                           // each pass so the UI never waits on a round-trip
     var tutActive = false; // when true, tutNoteOn checks input against steps
     var tutStep = 0, tutMisses = 0;
     var tutHeld = {};      // note -> true; lets chord steps require a full hold
@@ -699,11 +702,42 @@
         tutMsg.textContent = tutMisses === 0
           ? "Lesson complete — flawless!"
           : "Lesson complete — " + tutMisses + " missed. Try again?";
+        // Persist the pass and mirror it locally so the ✓ and the stats
+        // line update immediately; the POST is fire-and-forget because the
+        // server recomputes best/completions from its own row anyway.
+        post("/api/tutorial/pass", { lesson: lesson.name, misses: tutMisses });
+        var rec = tutProgress[lesson.name] || { completions: 0, bestMisses: tutMisses };
+        rec.completions++;
+        rec.bestMisses = Math.min(rec.bestMisses, tutMisses);
+        rec.lastMisses = tutMisses;
+        tutProgress[lesson.name] = rec;
+        markLessonOptions();
         return;
       }
       stripCursor(tutStep);
       guideStep();
       paintTutProgress();
+    }
+
+    // Decorate the lesson picker with a ✓ on every completed lesson. Option
+    // values are catalog indexes, so each option resolves to its lesson and
+    // the checkmark rides the option text — no extra markup needed.
+    function markLessonOptions() {
+      Array.prototype.forEach.call(tutSel.options, function (opt) {
+        var lesson = tutLessons[parseInt(opt.value, 10)];
+        if (!lesson) return;
+        var rec = tutProgress[lesson.name];
+        opt.textContent = lesson.name + (rec && rec.completions ? " ✓" : "");
+      });
+    }
+
+    // One-line lifetime record for the preview message ("Completed 3× ·
+    // best: flawless."). Empty until the lesson has been passed once.
+    function progressNote(lesson) {
+      var rec = tutProgress[lesson.name];
+      if (!rec || !rec.completions) return "";
+      var best = rec.bestMisses === 0 ? "flawless" : rec.bestMisses + " missed";
+      return " Completed " + rec.completions + "× · best: " + best + ".";
     }
 
     function stopDemo() {
@@ -760,15 +794,25 @@
       var lesson = tutLesson();
       if (!lesson) return;
       buildStrip(lesson);
-      tutMsg.textContent = lesson.desc;
+      tutMsg.textContent = lesson.desc + progressNote(lesson);
       tutProg.textContent = "";
     }
 
     if (tutPanel && tutSel) {
+      // Catalog and progress load as independent fetches; each one calls
+      // markLessonOptions + previewLesson, so whichever lands second paints
+      // the complete picture and arrival order never matters.
       fetch("/api/lessons").then(function (r) { return r.json(); }).then(function (d) {
         tutLessons = d || [];
+        markLessonOptions();
         previewLesson();
       }).catch(function (e) { console.error("lessons", e); });
+
+      fetch("/api/tutorial/progress").then(function (r) { return r.json(); }).then(function (d) {
+        (d || []).forEach(function (p) { tutProgress[p.lesson] = p; });
+        markLessonOptions();
+        previewLesson();
+      }).catch(function (e) { console.error("tutorial progress", e); });
 
       tutSel.addEventListener("change", function () {
         tutActive = false;

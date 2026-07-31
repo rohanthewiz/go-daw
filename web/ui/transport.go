@@ -19,7 +19,8 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 		b.DivClass("brand").T("go-daw"),
 
 		b.Wrap(func() {
-			attrs := []string{"id", "rec-btn"}
+			attrs := []string{"id", "rec-btn",
+				"title", "Record · starts after a one-bar count-in (press again to abort)"}
 			if t.Recording {
 				attrs = append(attrs, "data-on", "1")
 			}

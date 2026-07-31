@@ -84,6 +84,21 @@
 
   // ---- clicks: mute, record, scenes, modules -------------------------------
 
+  // Record count-in: one bar of clicks at the metronome's tempo and meter
+  // before record/start engages, mirroring the tutorial's count-in flow —
+  // the pace is in the player's ear before the take begins. Timers live
+  // here so a second REC press (or reaching zero) can clear them; a
+  // non-empty array doubles as the "counting in" flag, which also keeps
+  // the SSE meter paint from wiping the countdown text.
+  var recCountTimers = [];
+
+  function cancelRecCountIn() {
+    recCountTimers.forEach(clearTimeout);
+    recCountTimers = [];
+    var rt = document.getElementById("rec-time");
+    if (rt) rt.textContent = "";
+  }
+
   document.addEventListener("click", function (e) {
     var el = e.target;
 
@@ -97,10 +112,32 @@
     }
 
     if (el.id === "rec-btn") {
+      if (recCountTimers.length) {
+        // Pressing REC mid-count aborts the take before it starts.
+        cancelRecCountIn();
+        return;
+      }
       if (el.dataset.on === "1") {
         post("/api/record/stop").then(function () { el.dataset.on = "0"; });
       } else {
-        post("/api/record/start").then(function () { el.dataset.on = "1"; });
+        var recTimeEl = document.getElementById("rec-time");
+        var beats = parseInt(document.getElementById("metro-beats").value, 10) || 4;
+        var iv = metroIntervalMs();
+        for (var i = 0; i < beats; i++) {
+          (function (i) {
+            recCountTimers.push(setTimeout(function () {
+              // If the metronome is already running it owns the click
+              // stream; posting a second, phase-shifted stream would just
+              // smear the beat. The countdown text still paces the bar.
+              if (!metroOn) post("/api/click", { accent: i === 0 });
+              if (recTimeEl) recTimeEl.textContent = "in " + (beats - i);
+            }, i * iv));
+          })(i);
+        }
+        recCountTimers.push(setTimeout(function () {
+          recCountTimers = [];
+          post("/api/record/start").then(function () { el.dataset.on = "1"; });
+        }, beats * iv));
       }
       return;
     }
@@ -960,7 +997,11 @@
     var recBtn = document.getElementById("rec-btn");
     var recTime = document.getElementById("rec-time");
     if (recBtn) recBtn.dataset.on = d.recording ? "1" : "0";
-    if (recTime) recTime.textContent = d.recording ? d.recSeconds.toFixed(1) + "s" : "";
+    // While a count-in is pending the readout shows "in N…"; the broadcast
+    // (which still says not-recording) must not blank it between beats.
+    if (recTime && !recCountTimers.length) {
+      recTime.textContent = d.recording ? d.recSeconds.toFixed(1) + "s" : "";
+    }
 
     // MIDI transport readouts ride the same broadcast (entries align with
     // channel index; null = channel has no player).

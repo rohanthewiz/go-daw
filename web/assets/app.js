@@ -686,31 +686,36 @@
       if (isFinite(min)) setBase(Math.floor(min / 12) * 12);
     }
 
-    // Count-in pace: the lesson's own first-step duration, clamped so chord
-    // lessons (900ms holds) don't produce a glacial count and nothing gets
-    // faster than a brisk practice tempo.
-    function countInMs(lesson) {
-      var ms = (lesson.steps[0] && lesson.steps[0].ms) || 400;
-      return Math.max(300, Math.min(700, ms));
-    }
-
     // Count-in: n clicks before a lesson arms or a demo plays, so the pace is
     // in the player's ear before the first note. The first beat is accented,
     // matching the metronome's bar-start voicing. Timers ride demoTimers so
     // Stop (or switching lessons) cancels a pending count-in exactly the way
     // it silences a demo.
     //
+    // Pace comes from the metronome's BPM input (metroIntervalMs, the same
+    // clock the record count-in uses) rather than the lesson data: the tempo
+    // the player set is the tempo they expect to be counted in at, and one
+    // knob now governs every count-in on the page. The interval is read here
+    // rather than passed in because both call sites would pass the same
+    // expression. Previous scheme, kept for reference — lesson-derived pace:
+    //   var ms = (lesson.steps[0] && lesson.steps[0].ms) || 400;
+    //   return Math.max(300, Math.min(700, ms));
+    //
     // The toggle is read here (not at the call sites) so both Start and
     // Listen honor it through one gate; when off, done() runs synchronously —
     // the lesson arms on the same click, nothing pending to cancel.
     var tutCountBox = document.getElementById("tut-countin");
 
-    function countIn(n, intervalMs, done) {
+    function countIn(n, done) {
       if (tutCountBox && !tutCountBox.checked) return done();
+      var intervalMs = metroIntervalMs();
       for (var i = 0; i < n; i++) {
         (function (i) {
           demoTimers.push(setTimeout(function () {
-            post("/api/click", { accent: i === 0 });
+            // A running metronome already owns the click stream — a second,
+            // phase-shifted stream at the same tempo would smear the beat
+            // (the record count-in's rule); the countdown text still paces.
+            if (!metroOn) post("/api/click", { accent: i === 0 });
             tutMsg.textContent = "Count-in… " + (n - i);
           }, i * intervalMs));
         })(i);
@@ -727,7 +732,7 @@
       fitBase(lesson);
       buildStrip(lesson);
       stripCursor(-1);
-      countIn(4, countInMs(lesson), function () {
+      countIn(4, function () {
         tutActive = true;
         tutStep = 0;
         tutMisses = 0;
@@ -810,7 +815,7 @@
       fitBase(lesson);
       buildStrip(lesson);
       demoOn = true; // spans the count-in too, keeping stray play out of the checker
-      countIn(4, countInMs(lesson), function () {
+      countIn(4, function () {
         tutMsg.textContent = "Listen…";
         var t = 0;
         lesson.steps.forEach(function (s, i) {

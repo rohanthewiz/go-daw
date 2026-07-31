@@ -42,7 +42,7 @@ func (tp TutorialPanel) Render(b *element.Builder) (x any) {
 			// metronome inputs, so the toggle never flashes a default; app.js
 			// reads it at Start/Listen time and persists changes.
 			b.LabelClass("tut-countin", "title",
-				"Play four pacing clicks before a lesson or demo begins").R(
+				"Play four pacing clicks at the metronome tempo before a lesson or demo begins").R(
 				b.Wrap(func() {
 					attrs := []string{"type", "checkbox", "id", "tut-countin"}
 					if tp.CountIn {

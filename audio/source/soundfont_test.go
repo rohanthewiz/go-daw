@@ -143,6 +143,41 @@ func TestSFSynthDrumsToggle(t *testing.T) {
 	}
 }
 
+// TestSFSynthDrumKitChange verifies kit selection: a channel-9 program change
+// drains through the ring, the mirror state is captured for scenes/UI, and
+// drum notes still sound on the new kit (a kit the bank lacks falls back to
+// the default preset rather than going silent, so audio is guaranteed).
+func TestSFSynthDrumKitChange(t *testing.T) {
+	s, err := NewSFSynth(testBank(t), 48000, -6, 0)
+	if err != nil {
+		t.Fatalf("NewSFSynth: %v", err)
+	}
+	l, r := make([]float32, 256), make([]float32, 256)
+
+	s.SetDrums(true)
+	s.SetDrumKit(40) // GS Brush kit
+	if s.DrumKit() != 40 {
+		t.Fatalf("DrumKit = %d, want 40", s.DrumKit())
+	}
+	s.SetDrumKit(-1) // out of range must be ignored, not clamped
+	s.SetDrumKit(128)
+	if s.DrumKit() != 40 {
+		t.Fatalf("DrumKit = %d after out-of-range sets, want 40", s.DrumKit())
+	}
+
+	s.NoteOn(38, 0.9) // GM acoustic snare
+	var peak float32
+	for range 8 {
+		s.Read(l, r)
+		if p := blockPeak(l); p > peak {
+			peak = p
+		}
+	}
+	if peak == 0 {
+		t.Fatal("expected audio from the percussion channel after kit change")
+	}
+}
+
 // TestSFSynthReadNoAllocs enforces the realtime contract on the meltysynth
 // path exactly as TestPolySynthReadNoAllocs does for the additive synth.
 // Pedal and drums events ride along so their drain paths are covered too.
@@ -159,6 +194,7 @@ func TestSFSynthReadNoAllocs(t *testing.T) {
 
 	if allocs := testing.AllocsPerRun(100, func() {
 		s.SetDrums(false)
+		s.SetDrumKit(8)
 		s.Read(l, r)
 	}); allocs != 0 {
 		t.Fatalf("Read allocated %.1f times per call, want 0", allocs)

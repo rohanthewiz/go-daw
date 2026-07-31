@@ -196,6 +196,10 @@ func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 			// Live too: the toggle rides the ring, releasing sounding notes
 			// before rerouting to the GM percussion channel.
 			src.SetDrums(req.Value >= 0.5)
+		case "sfont.kit":
+			// Kit select is a program change on the percussion channel — live
+			// through the ring like program, so switching kits never rebuilds.
+			src.SetDrumKit(int(req.Value))
 		default:
 			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
 		}

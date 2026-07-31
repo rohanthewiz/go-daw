@@ -60,6 +60,26 @@ var gmPrograms = [128]string{
 	"Telephone Ring", "Helicopter", "Applause", "Gunshot",
 }
 
+// gmDrumKits lists the GS-standard percussion kits by program number on the
+// drum channel. A slice of pairs (not a [128]string) because kit numbers are
+// sparse — only these nine are conventional, and listing 119 empty slots in a
+// dropdown would bury the real choices. Banks that lack a kit fall back to
+// the default (Standard) preset in the synth, so every entry is safe to offer.
+var gmDrumKits = []struct {
+	Prog int
+	Name string
+}{
+	{0, "Standard"},
+	{8, "Room"},
+	{16, "Power"},
+	{24, "Electronic"},
+	{25, "TR-808"},
+	{32, "Jazz"},
+	{40, "Brush"},
+	{48, "Orchestra"},
+	{56, "SFX"},
+}
+
 // sfontBaseName trims a bank path to a compact dropdown label:
 // "soundbanks/GeneralUser-GS.sf2" → "GeneralUser-GS".
 func sfontBaseName(path string) string {

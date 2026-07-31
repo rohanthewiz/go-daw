@@ -130,6 +130,7 @@ type SourceState struct {
 	Square  bool    `json:"square,omitempty"`
 	Program int     `json:"program,omitempty"` // sfont: GM program 0..127
 	Drums   bool    `json:"drums,omitempty"`   // sfont: route notes to the GM percussion channel
+	DrumKit int     `json:"drumKit,omitempty"` // sfont: percussion kit program (GS numbering; 0 = Standard)
 	Loop    bool    `json:"loop,omitempty"`    // midi: restart the song when it ends
 }
 
@@ -231,6 +232,7 @@ func captureSource(s source.Source) SourceState {
 			Path:    src.Path(),
 			Program: src.Program(),
 			Drums:   src.Drums(),
+			DrumKit: src.DrumKit(),
 			LevelDB: src.LevelDB.Get(),
 		}
 	case *source.MidiPlayer:
@@ -384,6 +386,11 @@ func (c *Console) SetChannelSource(ch *Channel, ss SourceState) error {
 			// Queued through the event ring; it drains on the first Read, so
 			// the synth is already in drum mode before any note can arrive.
 			sf.SetDrums(true)
+		}
+		if ss.DrumKit != 0 {
+			// Zero doubles as "unset" (JSON omitempty) — harmless here, since
+			// kit 0 (Standard) is also the synth's channel-9 default.
+			sf.SetDrumKit(ss.DrumKit)
 		}
 		ch.SetSource(sf)
 	case "midi":

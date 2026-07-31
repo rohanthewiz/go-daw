@@ -146,7 +146,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 	srcType := "none"
 	oscFreq, oscLevel := 220.0, -18.0
 	synthLevel := -12.0
-	sfontLevel, sfontPath, sfontProg, sfontDrums := -6.0, "", 0, false
+	sfontLevel, sfontPath, sfontProg, sfontDrums, sfontKit := -6.0, "", 0, false, 0
 	midiLevel, midiBank, midiPath, midiLoop, midiLen := -6.0, "", "", false, 0.0
 	wavPath := ""
 	switch s := ch.Source().(type) {
@@ -163,6 +163,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		sfontPath = s.Path()
 		sfontProg = s.Program()
 		sfontDrums = s.Drums()
+		sfontKit = s.DrumKit()
 	case *source.MidiPlayer:
 		srcType = "midi"
 		midiLevel = s.LevelDB.Get()
@@ -243,6 +244,22 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 			// Drums reroutes notes to the GM percussion channel — a live
 			// source-param like program, so no rebuild/reload on toggle.
 			toggle(b, "src", ch.ID, "sfont.drums", "Drums", sfontDrums),
+			// Kit picks among the bank's channel-9 percussion presets (GS
+			// numbering). Live like program — it rides the event ring. Always
+			// rendered, even with Drums off: choosing a kit before toggling
+			// drums on is a natural flow, and hiding the select would make the
+			// feature undiscoverable.
+			b.Select("data-role", "sfont-kit", "data-id", id, "title", "Drum kit (channel 9)").R(
+				b.Wrap(func() {
+					for _, kit := range gmDrumKits {
+						attrs := []string{"value", strconv.Itoa(kit.Prog)}
+						if kit.Prog == sfontKit {
+							attrs = append(attrs, "selected", "selected")
+						}
+						b.Option(attrs...).T(strconv.Itoa(kit.Prog) + " · " + kit.Name + " Kit")
+					}
+				}),
+			),
 		),
 		// MIDI file player sub-controls: bank + song selects, a transport row,
 		// and level/loop. Bank and song changes both rebuild the source (new

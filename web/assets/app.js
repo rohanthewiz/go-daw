@@ -195,15 +195,28 @@
     if (el.dataset.role === "sfont-bank") {
       var sfId = el.dataset.id;
       var sfProg = document.querySelector('select[data-role="sfont-program"][data-id="' + sfId + '"]');
+      // Carry the live drums/kit state into the rebuild — the server accepts a
+      // full SourceState, so a bank switch mid-drum-session keeps the player on
+      // the same kit instead of silently resetting to the melodic program.
+      var sfDrums = document.querySelector('input[data-target="src"][data-id="' + sfId + '"][data-param="sfont.drums"]');
+      var sfKit = document.querySelector('select[data-role="sfont-kit"][data-id="' + sfId + '"]');
       post("/api/channel/" + sfId + "/source", {
         type: "sfont",
         path: el.value,
         program: sfProg ? parseInt(sfProg.value, 10) : 0,
+        drums: sfDrums ? sfDrums.checked : false,
+        drumKit: sfKit ? parseInt(sfKit.value, 10) : 0,
       }).then(function (r) { if (r.ok) location.reload(); });
     }
     if (el.dataset.role === "sfont-program") {
       post("/api/channel/" + el.dataset.id + "/source-param",
         { name: "sfont.program", value: parseInt(el.value, 10) });
+    }
+    // Kit switch is live like program: a channel-9 program change through the
+    // synth's event ring, so no rebuild/reload.
+    if (el.dataset.role === "sfont-kit") {
+      post("/api/channel/" + el.dataset.id + "/source-param",
+        { name: "sfont.kit", value: parseInt(el.value, 10) });
     }
 
     // Bank or song switch = structural change (new synthesizer / new parsed

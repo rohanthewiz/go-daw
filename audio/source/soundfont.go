@@ -43,6 +43,14 @@ const (
 	// Drums mode reroutes subsequent note events to MIDI channel 9, which
 	// meltysynth fixes to the bank's percussion presets (GM convention).
 	evDrums = 1 << 11
+
+	// evDrumKit flags a drum-kit change; the low byte carries the kit's
+	// program number (GS convention: 0 Standard, 8 Room, 16 Power, 24
+	// Electronic, 25 TR-808, 32 Jazz, 40 Brush, 48 Orchestra, 56 SFX).
+	// Distinct from evProgram because the two target different channels:
+	// kit changes are program changes on the percussion channel (bank 128),
+	// where presets are selected per-kit rather than per-instrument.
+	evDrumKit = 1 << 12
 )
 
 type SFSynth struct {
@@ -64,6 +72,11 @@ type SFSynth struct {
 	// display state, not audio state — the authoritative value lives in the
 	// synthesizer once the ring event drains.
 	program atomic.Int32
+
+	// drumKit mirrors the last requested percussion kit for snapshots/UI —
+	// display state only, like program; the authoritative value lives in the
+	// synthesizer's channel-9 patch once the ring event drains.
+	drumKit atomic.Int32
 
 	// drums mirrors the last requested percussion state for snapshots/UI —
 	// same display-only role as program. The audio-thread copy (drumsOn) is
@@ -195,6 +208,21 @@ func (s *SFSynth) SetDrums(on bool) {
 // Drums reports the last requested percussion state (for snapshots/UI).
 func (s *SFSynth) Drums() bool { return s.drums.Load() }
 
+// SetDrumKit queues a drum-kit change 0..127 (a program change on the
+// percussion channel). Control plane. Kits follow the GS numbering most GM
+// banks use (0 Standard, 8 Room, 16 Power, …); a kit the loaded bank lacks
+// falls back to meltysynth's default preset, so a bad pick can't go silent.
+func (s *SFSynth) SetDrumKit(kit int) {
+	if kit < 0 || kit > 127 {
+		return
+	}
+	s.drumKit.Store(int32(kit))
+	s.push(uint64(kit)&0xFF | evDrumKit)
+}
+
+// DrumKit reports the last requested drum kit (for snapshots/UI).
+func (s *SFSynth) DrumKit() int { return int(s.drumKit.Load()) }
+
 // Path reports the bank file backing this synth (for scene capture).
 func (s *SFSynth) Path() string { return s.path }
 
@@ -236,6 +264,13 @@ func (s *SFSynth) drainEvents() {
 			// any moment.
 			s.synth.NoteOffAll(false)
 			s.drumsOn = ev&1 != 0
+		case ev&evDrumKit != 0:
+			// 0xC0 on channel 9 = kit select (the channel is pinned to bank
+			// 128, so the patch number picks among percussion presets). No
+			// note-off sweep needed: already-sounding drum hits are one-shots
+			// that finish on the old kit's samples, which is what a hardware
+			// module does too.
+			s.synth.ProcessMidiMessage(9, 0xC0, int32(ev&0xFF), 0)
 		default:
 			ch := int32(0)
 			if s.drumsOn {

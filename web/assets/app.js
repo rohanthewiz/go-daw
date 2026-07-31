@@ -941,6 +941,12 @@
   // spinner click — never per keystroke.
   if (metroBpm) metroBpm.addEventListener("change", saveMetroBpm);
 
+  // Beats-per-bar persists too. No debounce: a select fires exactly one
+  // change per pick, and nothing rewrites it programmatically.
+  if (metroBeats) metroBeats.addEventListener("change", function () {
+    post("/api/setting", { key: "metro.beats", value: metroBeats.value });
+  });
+
   // Tap tempo shares the CLICK button with on/off rather than adding a
   // second button. Every press is timestamped; presses 1 and 2 toggle as
   // usual, and only a 3rd press inside the 2s window confirms a tap run —

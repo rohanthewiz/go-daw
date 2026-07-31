@@ -10,8 +10,9 @@ import (
 type TransportBar struct {
 	Recording bool
 	Scenes    []store.SceneInfo
-	Duplex    bool
-	MetroBPM  string // persisted tempo rendered into the BPM input
+	Duplex     bool
+	MetroBPM   string // persisted tempo rendered into the BPM input
+	MetroBeats string // persisted beats-per-bar; selects the matching meter option
 }
 
 // Render satisfies element.Component.
@@ -44,11 +45,22 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 				"min", "30", "max", "300", "step", "1", "value", t.MetroBPM,
 				"title", "Beats per minute").R(),
 			b.SpanClass("metro-label").T("bpm"),
+			// Meter options as data so the persisted selection is one loop —
+			// the settings validator whitelists these same values; keep the
+			// two lists in step when adding a meter.
 			b.Select("id", "metro-beats", "title", "Beats per bar").R(
-				b.Option("value", "2").T("2/4"),
-				b.Option("value", "3").T("3/4"),
-				b.Option("value", "4", "selected", "selected").T("4/4"),
-				b.Option("value", "6").T("6/8"),
+				b.Wrap(func() {
+					meters := []struct{ value, label string }{
+						{"2", "2/4"}, {"3", "3/4"}, {"4", "4/4"}, {"6", "6/8"},
+					}
+					for _, m := range meters {
+						attrs := []string{"value", m.value}
+						if m.value == t.MetroBeats {
+							attrs = append(attrs, "selected", "selected")
+						}
+						b.Option(attrs...).T(m.label)
+					}
+				}),
 			),
 		),
 

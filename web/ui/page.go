@@ -16,6 +16,7 @@ type PageData struct {
 	Soundbanks []string // .sf2 paths offered in each channel's sfont selector
 	MidiFiles  []string // .mid paths offered in each channel's midi selector
 	MetroBPM   string   // persisted metronome tempo, already validated/defaulted
+	MetroBeats string   // persisted beats-per-bar, already validated/defaulted
 }
 
 // MixerPage renders the complete console HTML document. The page is fully
@@ -37,8 +38,9 @@ func MixerPage(d PageData) string {
 			element.RenderComponents(b, TransportBar{
 				Recording: d.Recording,
 				Scenes:    d.Scenes,
-				Duplex:    d.Duplex,
-				MetroBPM:  d.MetroBPM,
+				Duplex:     d.Duplex,
+				MetroBPM:   d.MetroBPM,
+				MetroBeats: d.MetroBeats,
 			}),
 
 			b.DivClass("console").R(

@@ -61,7 +61,8 @@ func (srv *Server) pageHandler(ctx rweb.Context) error {
 		Duplex:     srv.engine.Duplex,
 		Soundbanks: srv.listSoundbanks(),
 		MidiFiles:  srv.listMidiFiles(),
-		MetroBPM:   srv.metroBPM(),
+		MetroBPM:   srv.setting("metro.bpm", "120"),
+		MetroBeats: srv.setting("metro.beats", "4"),
 	})
 	return ctx.WriteHTML(html)
 }
@@ -621,6 +622,16 @@ var settingValidators = map[string]func(value string) error{
 		}
 		return nil
 	},
+	"metro.beats": func(value string) error {
+		// Exact-set membership (not a numeric range) because the value is
+		// rendered back as the selected <option> — anything outside the
+		// select's option list would silently select nothing on reload.
+		switch value {
+		case "2", "3", "4", "6":
+			return nil
+		}
+		return serr.New("beats-per-bar not offered by the meter selector", "beats", value)
+	},
 }
 
 // settingHandler persists one UI preference. Saves are discrete user actions
@@ -644,17 +655,17 @@ func (srv *Server) settingHandler(ctx rweb.Context) error {
 	return ok(ctx)
 }
 
-// metroBPM reads the persisted metronome tempo for page render, falling back
-// to 120 when unset or unreadable — a missing preference must never block the
-// mixer page.
-func (srv *Server) metroBPM() string {
-	v, found, err := srv.store.GetSetting("metro.bpm")
+// setting reads one persisted preference for page render, falling back to
+// the given default when unset or unreadable — a missing preference must
+// never block the mixer page.
+func (srv *Server) setting(key, deflt string) string {
+	v, found, err := srv.store.GetSetting(key)
 	if err != nil {
-		logger.LogErr(err, "msg", "reading metro.bpm; using default")
-		return "120"
+		logger.LogErr(err, "msg", "reading setting; using default", "key", key)
+		return deflt
 	}
 	if !found {
-		return "120"
+		return deflt
 	}
 	return v
 }

@@ -21,6 +21,7 @@ type ChannelStrip struct {
 	ModuleNames []string
 	Duplex      bool
 	Soundbanks  []string // .sf2 paths for the sfont source selector
+	MidiFiles   []string // .mid paths for the midi source selector
 }
 
 // Render satisfies element.Component.
@@ -146,6 +147,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 	oscFreq, oscLevel := 220.0, -18.0
 	synthLevel := -12.0
 	sfontLevel, sfontPath, sfontProg, sfontDrums := -6.0, "", 0, false
+	midiLevel, midiBank, midiPath, midiLoop, midiLen := -6.0, "", "", false, 0.0
 	wavPath := ""
 	switch s := ch.Source().(type) {
 	case *source.Oscillator:
@@ -161,6 +163,13 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		sfontPath = s.Path()
 		sfontProg = s.Program()
 		sfontDrums = s.Drums()
+	case *source.MidiPlayer:
+		srcType = "midi"
+		midiLevel = s.LevelDB.Get()
+		midiBank = s.BankPath()
+		midiPath = s.MidiPath()
+		midiLoop = s.Loop()
+		midiLen = s.LengthSeconds()
 	case *source.WavSource:
 		srcType = "wav"
 		wavPath = strings.TrimPrefix(s.Name(), "wav:")
@@ -172,7 +181,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		b.Label().T("Src"),
 		b.Select("data-role", "source-select", "data-id", id).R(
 			b.Wrap(func() {
-				for _, opt := range []string{"none", "osc", "synth", "sfont", "live", "wav"} {
+				for _, opt := range []string{"none", "osc", "synth", "sfont", "midi", "live", "wav"} {
 					attrs := []string{"value", opt}
 					if opt == srcType {
 						attrs = append(attrs, "selected", "selected")
@@ -184,6 +193,11 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 					// (rather than hiding) advertises the feature and hints at
 					// the fix — drop an .sf2 into the soundbanks folder.
 					if opt == "sfont" && len(cs.Soundbanks) == 0 {
+						attrs = append(attrs, "disabled", "disabled")
+					}
+					// midi playback needs both a bank to render through and a
+					// song to play; same disable-to-advertise reasoning.
+					if opt == "midi" && (len(cs.Soundbanks) == 0 || len(cs.MidiFiles) == 0) {
 						attrs = append(attrs, "disabled", "disabled")
 					}
 					b.Option(attrs...).T(opt)
@@ -229,6 +243,45 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 			// Drums reroutes notes to the GM percussion channel — a live
 			// source-param like program, so no rebuild/reload on toggle.
 			toggle(b, "src", ch.ID, "sfont.drums", "Drums", sfontDrums),
+		),
+		// MIDI file player sub-controls: bank + song selects, a transport row,
+		// and level/loop. Bank and song changes both rebuild the source (new
+		// synthesizer / new parsed file), matching the sfont-bank convention;
+		// transport buttons and loop/level are live against the running player.
+		b.DivClass("src-midi", "data-id", id).R(
+			b.Select("data-role", "midi-bank", "data-id", id, "title", "SoundFont bank").R(
+				b.Wrap(func() {
+					for _, bank := range cs.Soundbanks {
+						attrs := []string{"value", bank}
+						if bank == midiBank {
+							attrs = append(attrs, "selected", "selected")
+						}
+						b.Option(attrs...).T(sfontBaseName(bank))
+					}
+				}),
+			),
+			b.Select("data-role", "midi-file", "data-id", id, "title", "MIDI song").R(
+				b.Wrap(func() {
+					for _, mf := range cs.MidiFiles {
+						attrs := []string{"value", mf}
+						if mf == midiPath {
+							attrs = append(attrs, "selected", "selected")
+						}
+						b.Option(attrs...).T(sfontBaseName(mf))
+					}
+				}),
+			),
+			b.DivClass("midi-transport").R(
+				b.Button("data-role", "midi-play", "data-id", id, "title", "Play / resume").T("▶"),
+				b.Button("data-role", "midi-pause", "data-id", id, "title", "Pause").T("⏸"),
+				b.Button("data-role", "midi-stop", "data-id", id, "title", "Stop").T("⏹"),
+				// Position readout driven by the SSE meter stream; the server
+				// renders the initial "0:00 / length" so the label is correct
+				// even before the first broadcast lands.
+				b.SpanClass("midi-pos", "data-id", id).T("0:00 / "+fmtClock(midiLen)),
+			),
+			slider(b, "src", ch.ID, "midi.level", "Lvl", -60, 0, 1, midiLevel, ""),
+			toggle(b, "src", ch.ID, "midi.loop", "Loop", midiLoop),
 		),
 		b.DivClass("src-wav", "data-id", id).R(
 			b.Input("type", "text", "placeholder", "path/to/file.wav",
@@ -280,6 +333,16 @@ func (cs ChannelStrip) renderModules(b *element.Builder) (x any) {
 		),
 	)
 	return
+}
+
+// fmtClock renders seconds as m:ss for the midi position/length readout.
+// (JS mirrors the same format when updating from the SSE stream.)
+func fmtClock(sec float64) string {
+	if sec < 0 {
+		sec = 0
+	}
+	s := int(sec)
+	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
 // modSlider is like slider but addresses a module instance parameter.

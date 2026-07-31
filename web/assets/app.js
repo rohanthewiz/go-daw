@@ -138,6 +138,15 @@
       return;
     }
 
+    // MIDI transport buttons map directly onto the player's play/pause/stop
+    // events; state feedback comes back through the SSE meter stream rather
+    // than optimistic toggling, so the buttons always show the real state.
+    if (el.dataset && (el.dataset.role === "midi-play" || el.dataset.role === "midi-pause" || el.dataset.role === "midi-stop")) {
+      post("/api/channel/" + el.dataset.id + "/midi",
+        { action: el.dataset.role.replace("midi-", "") });
+      return;
+    }
+
     if (el.dataset && el.dataset.role === "wav-load") {
       var id2 = el.dataset.id;
       var path = document.querySelector('input[data-role="wav-path"][data-id="' + id2 + '"]').value.trim();
@@ -166,6 +175,15 @@
         body.path = bankSel.value;
         body.program = progSel ? parseInt(progSel.value, 10) : 0;
       }
+      if (type === "midi") {
+        // Same immediate-install contract: the midi option is disabled unless
+        // both a bank and at least one song exist, so the selects have values.
+        var mBankSel = document.querySelector('select[data-role="midi-bank"][data-id="' + id + '"]');
+        var mFileSel = document.querySelector('select[data-role="midi-file"][data-id="' + id + '"]');
+        if (!mBankSel || !mBankSel.value || !mFileSel || !mFileSel.value) return;
+        body.bank = mBankSel.value;
+        body.path = mFileSel.value;
+      }
       post("/api/channel/" + id + "/source", body).then(function (r) {
         if (r.ok) location.reload();
       });
@@ -188,6 +206,20 @@
         { name: "sfont.program", value: parseInt(el.value, 10) });
     }
 
+    // Bank or song switch = structural change (new synthesizer / new parsed
+    // file), so both rebuild the source and reload — the sfont-bank pattern.
+    if (el.dataset.role === "midi-bank" || el.dataset.role === "midi-file") {
+      var mId = el.dataset.id;
+      var mBank = document.querySelector('select[data-role="midi-bank"][data-id="' + mId + '"]');
+      var mFile = document.querySelector('select[data-role="midi-file"][data-id="' + mId + '"]');
+      if (!mBank || !mBank.value || !mFile || !mFile.value) return;
+      post("/api/channel/" + mId + "/source", {
+        type: "midi",
+        bank: mBank.value,
+        path: mFile.value,
+      }).then(function (r) { if (r.ok) location.reload(); });
+    }
+
     if (el.dataset.role === "group-select") {
       post("/api/channel/" + el.dataset.id + "/group",
         { group: parseInt(el.value, 10) });
@@ -203,10 +235,12 @@
     var osc = document.querySelector('.src-osc[data-id="' + id + '"]');
     var syn = document.querySelector('.src-synth[data-id="' + id + '"]');
     var sf = document.querySelector('.src-sfont[data-id="' + id + '"]');
+    var mid = document.querySelector('.src-midi[data-id="' + id + '"]');
     var wav = document.querySelector('.src-wav[data-id="' + id + '"]');
     if (osc) osc.dataset.visible = type === "osc" ? "1" : "0";
     if (syn) syn.dataset.visible = type === "synth" ? "1" : "0";
     if (sf) sf.dataset.visible = type === "sfont" ? "1" : "0";
+    if (mid) mid.dataset.visible = type === "midi" ? "1" : "0";
     if (wav) wav.dataset.visible = type === "wav" ? "1" : "0";
   }
 
@@ -740,5 +774,24 @@
     var recTime = document.getElementById("rec-time");
     if (recBtn) recBtn.dataset.on = d.recording ? "1" : "0";
     if (recTime) recTime.textContent = d.recording ? d.recSeconds.toFixed(1) + "s" : "";
+
+    // MIDI transport readouts ride the same broadcast (entries align with
+    // channel index; null = channel has no player).
+    (d.midi || []).forEach(function (mi, i) {
+      if (!mi) return;
+      var id = i + 1;
+      var pos = document.querySelector('.midi-pos[data-id="' + id + '"]');
+      if (pos) pos.textContent = clock(mi.pos) + " / " + clock(mi.len);
+      var play = document.querySelector('button[data-role="midi-play"][data-id="' + id + '"]');
+      var pause = document.querySelector('button[data-role="midi-pause"][data-id="' + id + '"]');
+      if (play) play.dataset.state = mi.state === "playing" ? "playing" : "";
+      if (pause) pause.dataset.state = mi.state === "paused" ? "paused" : "";
+    });
   };
+
+  // clock formats seconds as m:ss, mirroring the server's initial render.
+  function clock(sec) {
+    var s = Math.max(0, Math.floor(sec));
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
 })();

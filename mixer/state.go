@@ -122,13 +122,15 @@ type ReverbState struct {
 }
 
 type SourceState struct {
-	Type    string  `json:"type"`           // "none" | "osc" | "wav" | "live" | "synth" | "sfont"
-	Path    string  `json:"path,omitempty"` // wav: audio file; sfont: .sf2 bank file
+	Type    string  `json:"type"`           // "none" | "osc" | "wav" | "live" | "synth" | "sfont" | "midi"
+	Path    string  `json:"path,omitempty"` // wav: audio file; sfont: .sf2 bank file; midi: .mid song file
+	Bank    string  `json:"bank,omitempty"` // midi: .sf2 bank the song plays through
 	FreqHz  float64 `json:"freqHz,omitempty"`
 	LevelDB float64 `json:"levelDb,omitempty"`
 	Square  bool    `json:"square,omitempty"`
 	Program int     `json:"program,omitempty"` // sfont: GM program 0..127
 	Drums   bool    `json:"drums,omitempty"`   // sfont: route notes to the GM percussion channel
+	Loop    bool    `json:"loop,omitempty"`    // midi: restart the song when it ends
 }
 
 type ModuleState struct {
@@ -229,6 +231,16 @@ func captureSource(s source.Source) SourceState {
 			Path:    src.Path(),
 			Program: src.Program(),
 			Drums:   src.Drums(),
+			LevelDB: src.LevelDB.Get(),
+		}
+	case *source.MidiPlayer:
+		// Transport position is performance state (like held notes), so only
+		// the file/bank pairing and the loop preference are scene-worthy.
+		return SourceState{
+			Type:    "midi",
+			Path:    src.MidiPath(),
+			Bank:    src.BankPath(),
+			Loop:    src.Loop(),
 			LevelDB: src.LevelDB.Get(),
 		}
 	case *source.LiveSource:
@@ -374,6 +386,25 @@ func (c *Console) SetChannelSource(ch *Channel, ss SourceState) error {
 			sf.SetDrums(true)
 		}
 		ch.SetSource(sf)
+	case "midi":
+		if ss.Path == "" || ss.Bank == "" {
+			return serr.New("midi source requires a song path and a bank", "channel", itoa(ch.ID))
+		}
+		level := ss.LevelDB
+		if level == 0 {
+			// Zero doubles as "unset" (JSON omitempty); same -6 dBFS trim
+			// rationale as sfont — banks are conservatively mixed already.
+			level = -6
+		}
+		mp, err := source.NewMidiPlayer(ss.Bank, ss.Path, c.SampleRate, level)
+		if err != nil {
+			return serr.Wrap(err, "channel", itoa(ch.ID))
+		}
+		// Loop is a control-plane atomic latched at play time, so setting it
+		// here is race-free. The player installs stopped: recalling a scene
+		// must never start a song blasting unprompted.
+		mp.SetLoop(ss.Loop)
+		ch.SetSource(mp)
 	case "live":
 		ch.SetSource(source.NewLive(c.LiveFeed))
 	case "none", "":

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rohanthewiz/go-daw/audio"
+	"github.com/rohanthewiz/go-daw/audio/source"
 	"github.com/rohanthewiz/go-daw/config"
 	"github.com/rohanthewiz/go-daw/store"
 	styl "github.com/rohanthewiz/go-styl"
@@ -67,11 +68,13 @@ func Start(cfg *config.Config, engine *audio.Engine, st *store.Store) error {
 	api.Get("/scenes", srv.scenesListHandler)
 	api.Get("/lessons", srv.lessonsHandler)
 	api.Get("/soundfonts", srv.soundfontsHandler)
+	api.Get("/midifiles", srv.midiFilesHandler)
 	api.Post("/channel/:id/param", srv.channelParamHandler)
 	api.Post("/channel/:id/source", srv.channelSourceHandler)
 	api.Post("/channel/:id/source-param", srv.sourceParamHandler)
 	api.Post("/channel/:id/note", srv.noteHandler)
 	api.Post("/channel/:id/pedal", srv.pedalHandler)
+	api.Post("/channel/:id/midi", srv.midiControlHandler)
 	api.Post("/channel/:id/group", srv.channelGroupHandler)
 	api.Post("/channel/:id/module/add", srv.moduleAddHandler)
 	api.Post("/channel/:id/module/remove", srv.moduleRemoveHandler)
@@ -100,6 +103,14 @@ func (srv *Server) meterLoop() {
 		PR float32 `json:"pr"`
 		RR float32 `json:"rr"`
 	}
+	// midiInfo rides the meter broadcast so every open tab sees transport
+	// state/position without polling — the meter cadence (~12.5 Hz) is already
+	// exactly right for a position readout.
+	type midiInfo struct {
+		State string  `json:"state"`
+		Pos   float64 `json:"pos"`
+		Len   float64 `json:"len"`
+	}
 	tick := time.NewTicker(80 * time.Millisecond)
 	defer tick.Stop()
 
@@ -110,13 +121,27 @@ func (srv *Server) meterLoop() {
 			Ch         []sideLevels `json:"ch"`
 			Grp        []sideLevels `json:"grp"`
 			Master     sideLevels   `json:"master"`
+			Midi       []*midiInfo  `json:"midi,omitempty"`
 			Recording  bool         `json:"recording"`
 			RecSeconds float64      `json:"recSeconds"`
 		}{}
 
+		anyMidi := false
 		for _, ch := range con.Channels {
 			pl, rl, pr, rr := ch.Meter.Levels()
 			payload.Ch = append(payload.Ch, sideLevels{pl, rl, pr, rr})
+
+			// Positionally aligned with Ch; nil for channels without a player,
+			// so the JSON stays tiny when the feature is idle.
+			var mi *midiInfo
+			if mp, isMidi := ch.Source().(*source.MidiPlayer); isMidi {
+				mi = &midiInfo{State: mp.PlayState(), Pos: mp.PosSeconds(), Len: mp.LengthSeconds()}
+				anyMidi = true
+			}
+			payload.Midi = append(payload.Midi, mi)
+		}
+		if !anyMidi {
+			payload.Midi = nil
 		}
 		for _, g := range con.Groups {
 			pl, rl, pr, rr := g.Meter.Levels()

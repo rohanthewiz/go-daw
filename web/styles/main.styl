@@ -194,14 +194,14 @@ body
     border 1px solid line
     border-radius 3px
 
-.src-osc, .src-synth, .src-sfont, .src-wav
+.src-osc, .src-synth, .src-sfont, .src-midi, .src-wav
   display none
   &[data-visible="1"]
     display block
 
 // Bank + instrument selects stack vertically: GM program names are long, and
 // a full-width row keeps them readable inside a narrow strip.
-.src-sfont
+.src-sfont, .src-midi
   select
     display block
     width 100%
@@ -211,6 +211,36 @@ body
     border 1px solid line
     border-radius 3px
     font-size 10px
+
+// Transport row: compact square buttons plus the position readout. The play
+// button doubles as the state indicator (data-state set from the SSE stream).
+.midi-transport
+  display flex
+  align-items center
+  gap 3px
+  margin 2px 0 4px
+  button
+    background panel2
+    color ink
+    border 1px solid line
+    border-radius 3px
+    font-size 11px
+    line-height 1
+    padding 3px 6px
+    cursor pointer
+    &:hover
+      background panel
+  button[data-state="playing"]
+    background #1f4630
+    border-color green
+  button[data-state="paused"]
+    background #4a3f1f
+    border-color amber
+  .midi-pos
+    margin-left auto
+    color inkDim
+    font-size 10px
+    font-variant-numeric tabular-nums
 
 .src-wav
   input[type="text"]

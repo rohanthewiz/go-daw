@@ -14,6 +14,7 @@ type PageData struct {
 	Recording  bool
 	Duplex     bool
 	Soundbanks []string // .sf2 paths offered in each channel's sfont selector
+	MidiFiles  []string // .mid paths offered in each channel's midi selector
 }
 
 // MixerPage renders the complete console HTML document. The page is fully
@@ -48,6 +49,7 @@ func MixerPage(d PageData) string {
 								ModuleNames: moduleNames,
 								Duplex:      d.Duplex,
 								Soundbanks:  d.Soundbanks,
+								MidiFiles:   d.MidiFiles,
 							})
 						}
 					}),

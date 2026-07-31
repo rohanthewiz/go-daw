@@ -27,6 +27,7 @@ type Config struct {
 	RecordingsDir string `json:"recordingsDir"` // bounced WAVs land here
 	PluginsDir    string `json:"pluginsDir"`    // *.so audio modules are loaded from here
 	SoundbanksDir string `json:"soundbanksDir"` // *.sf2 SoundFont banks offered in the UI
+	MidiDir       string `json:"midiDir"`       // *.mid song files offered in the UI
 }
 
 // defaults returns the baseline config. 48kHz/256-frame blocks is the sweet
@@ -44,6 +45,7 @@ func defaults() Config {
 		RecordingsDir: "recordings",
 		PluginsDir:    "plugins",
 		SoundbanksDir: "soundbanks",
+		MidiDir:       "midifiles",
 	}
 }
 

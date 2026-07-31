@@ -60,6 +60,7 @@ func (srv *Server) pageHandler(ctx rweb.Context) error {
 		Recording:  srv.engine.Recorder() != nil,
 		Duplex:     srv.engine.Duplex,
 		Soundbanks: srv.listSoundbanks(),
+		MidiFiles:  srv.listMidiFiles(),
 	})
 	return ctx.WriteHTML(html)
 }
@@ -87,6 +88,30 @@ func (srv *Server) listSoundbanks() (banks []string) {
 // changes without a full page reload).
 func (srv *Server) soundfontsHandler(ctx rweb.Context) error {
 	return ctx.WriteJSON(srv.listSoundbanks())
+}
+
+// listMidiFiles scans the configured directory for .mid/.midi songs — the
+// exact drop-a-file-and-reload discipline listSoundbanks establishes, and for
+// the same reason: the folder is tiny, so a per-render ReadDir is noise.
+func (srv *Server) listMidiFiles() (files []string) {
+	entries, err := os.ReadDir(srv.cfg.MidiDir)
+	if err != nil {
+		logger.LogErr(serr.Wrap(err, "dir", srv.cfg.MidiDir), "msg", "scanning midi files; offering none")
+		return nil
+	}
+	for _, e := range entries {
+		ext := filepath.Ext(e.Name())
+		if e.IsDir() || (!strings.EqualFold(ext, ".mid") && !strings.EqualFold(ext, ".midi")) {
+			continue
+		}
+		files = append(files, filepath.Join(srv.cfg.MidiDir, e.Name()))
+	}
+	return files
+}
+
+// midiFilesHandler exposes the song list to the client.
+func (srv *Server) midiFilesHandler(ctx rweb.Context) error {
+	return ctx.WriteJSON(srv.listMidiFiles())
 }
 
 func (srv *Server) stateHandler(ctx rweb.Context) error {
@@ -174,8 +199,56 @@ func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 		default:
 			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
 		}
+	case *source.MidiPlayer:
+		switch req.Name {
+		case "midi.level":
+			src.LevelDB.Set(req.Value)
+		case "midi.loop":
+			// Control-plane atomic latched by the audio thread at play time;
+			// mid-song toggles apply on the next play (sequencer limitation).
+			src.SetLoop(req.Value >= 0.5)
+		default:
+			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
+		}
 	default:
 		return fail(ctx, serr.New("channel source has no adjustable parameters"), 400)
+	}
+	return ok(ctx)
+}
+
+// ---- MIDI file transport ----
+
+type midiCtlReq struct {
+	Action string `json:"action"` // "play" | "pause" | "stop"
+}
+
+// midiControlHandler drives the MidiPlayer transport. A dedicated endpoint
+// (rather than riding source-param) because transport commands are discrete
+// events with ordering semantics, not continuous values to debounce — the
+// same reasoning that keeps note and pedal events on their own routes.
+func (srv *Server) midiControlHandler(ctx rweb.Context) error {
+	ch, err := srv.channel(ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	req, err := decodeBody[midiCtlReq](ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	mp, isMidi := ch.Source().(*source.MidiPlayer)
+	if !isMidi {
+		// 409 mirrors note/pedal: wrong source type is a state conflict.
+		return fail(ctx, serr.New("channel source is not a midi player", "channel", strconv.Itoa(ch.ID)), 409)
+	}
+	switch req.Action {
+	case "play":
+		mp.Play()
+	case "pause":
+		mp.Pause()
+	case "stop":
+		mp.Stop()
+	default:
+		return fail(ctx, serr.New("unknown transport action", "action", req.Action), 400)
 	}
 	return ok(ctx)
 }

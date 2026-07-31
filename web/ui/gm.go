@@ -2,7 +2,12 @@ package ui
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/rohanthewiz/go-daw/audio/source"
+	"github.com/rohanthewiz/logger"
+	"github.com/rohanthewiz/serr"
 )
 
 // gmPrograms is the standard General MIDI Level 1 program map (0-based). The
@@ -60,15 +65,22 @@ var gmPrograms = [128]string{
 	"Telephone Ring", "Helicopter", "Applause", "Gunshot",
 }
 
+// drumKitOption is one entry in the kit dropdown: the program number sent as a
+// channel-9 program change, and the label shown to the player.
+type drumKitOption struct {
+	Prog int
+	Name string
+}
+
 // gmDrumKits lists the GS-standard percussion kits by program number on the
 // drum channel. A slice of pairs (not a [128]string) because kit numbers are
 // sparse — only these nine are conventional, and listing 119 empty slots in a
 // dropdown would bury the real choices. Banks that lack a kit fall back to
 // the default (Standard) preset in the synth, so every entry is safe to offer.
-var gmDrumKits = []struct {
-	Prog int
-	Name string
-}{
+//
+// This is now only the fallback for when a bank's own preset list is
+// unreadable; see drumKitOptions.
+var gmDrumKits = []drumKitOption{
 	{0, "Standard"},
 	{8, "Room"},
 	{16, "Power"},
@@ -78,6 +90,51 @@ var gmDrumKits = []struct {
 	{40, "Brush"},
 	{48, "Orchestra"},
 	{56, "SFX"},
+}
+
+// drumKitOptions builds the kit dropdown for the bank at bankPath, preferring
+// the bank's own bank-128 preset names over the fixed GS table. Real banks
+// diverge from the table in both directions — GeneralUser-GS calls kit 25
+// "808/909" and adds a "CM-64/32L" at 127, while MuseScore_General exposes
+// seven Standard variants and a "Marching Snare" — so listing what the bank
+// actually contains is both more accurate and more discoverable.
+//
+// Falls back to gmDrumKits when the bank can't be read or declares no
+// percussion presets, because an empty dropdown would strand a player in drums
+// mode with no way to change kits; the GS entries still work there, since a
+// missing preset degrades to the synth's default rather than going silent.
+//
+// cur is the kit currently selected on the channel. If the bank doesn't define
+// it (common right after a bank switch: the old bank's kit 26 has no counterpart
+// in the new one), a placeholder entry is inserted so the select keeps showing
+// the server's actual state instead of silently snapping to the first option and
+// lying about what is playing.
+func drumKitOptions(bankPath string, cur int) []drumKitOption {
+	kits := gmDrumKits
+	if bankPath != "" {
+		if presets, err := source.BankDrumKits(bankPath); err == nil && len(presets) > 0 {
+			kits = make([]drumKitOption, 0, len(presets))
+			for _, p := range presets {
+				kits = append(kits, drumKitOption{Prog: p.Program, Name: p.Name})
+			}
+		} else if err != nil {
+			logger.LogErr(serr.Wrap(err, "bank", bankPath), "msg", "reading bank drum kits; falling back to the GS table")
+		}
+	}
+
+	for _, k := range kits {
+		if k.Prog == cur {
+			return kits
+		}
+	}
+	// Insert in program order so the placeholder lands where the player expects
+	// that number to be, rather than jumping to the top of the list.
+	miss := drumKitOption{Prog: cur, Name: "(not in bank — Standard)"}
+	at := sort.Search(len(kits), func(i int) bool { return kits[i].Prog >= cur })
+	out := make([]drumKitOption, 0, len(kits)+1)
+	out = append(out, kits[:at]...)
+	out = append(out, miss)
+	return append(out, kits[at:]...)
 }
 
 // sfontBaseName trims a bank path to a compact dropdown label:

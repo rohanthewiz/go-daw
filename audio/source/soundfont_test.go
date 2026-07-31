@@ -2,6 +2,8 @@ package source
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -175,6 +177,68 @@ func TestSFSynthDrumKitChange(t *testing.T) {
 	}
 	if peak == 0 {
 		t.Fatal("expected audio from the percussion channel after kit change")
+	}
+}
+
+// TestBankDrumKits checks the percussion preset listing that drives the kit
+// dropdown. The assertions are bank-agnostic (any GM-compliant .sf2 must carry
+// a Standard kit at program 0 in bank 128) so the test holds for whichever bank
+// the developer has downloaded.
+func TestBankDrumKits(t *testing.T) {
+	kits, err := BankDrumKits(testBank(t))
+	if err != nil {
+		t.Fatalf("BankDrumKits: %v", err)
+	}
+	if len(kits) == 0 {
+		t.Fatal("expected at least one percussion preset in a GM bank")
+	}
+	if kits[0].Program != 0 {
+		t.Errorf("first kit program = %d, want 0 (Standard); list should be program-ordered", kits[0].Program)
+	}
+	prev := -1
+	for _, k := range kits {
+		if k.Program <= prev {
+			t.Fatalf("kits not sorted ascending: %d after %d", k.Program, prev)
+		}
+		prev = k.Program
+		if k.Name == "" || k.Name != strings.TrimSpace(k.Name) {
+			t.Errorf("kit %d name %q should be non-empty and trimmed", k.Program, k.Name)
+		}
+	}
+
+	// Every listed program must be selectable — the whole point of reading the
+	// bank rather than guessing from the GS table.
+	s, err := NewSFSynth(testBank(t), 48000, -6, 0)
+	if err != nil {
+		t.Fatalf("NewSFSynth: %v", err)
+	}
+	l, r := make([]float32, 256), make([]float32, 256)
+	s.SetDrums(true)
+	for _, k := range kits {
+		s.SetDrumKit(k.Program)
+		if s.DrumKit() != k.Program {
+			t.Fatalf("DrumKit = %d, want %d", s.DrumKit(), k.Program)
+		}
+		s.NoteOn(38, 0.9) // acoustic snare — present in every GM kit
+		var peak float32
+		for range 8 {
+			s.Read(l, r)
+			if p := blockPeak(l); p > peak {
+				peak = p
+			}
+		}
+		if peak == 0 {
+			t.Errorf("kit %d (%s) produced silence", k.Program, k.Name)
+		}
+		s.NoteOff(38)
+	}
+}
+
+// TestBankDrumKitsMissing verifies the error path the UI relies on to fall back
+// to the GS table rather than rendering an empty dropdown.
+func TestBankDrumKitsMissing(t *testing.T) {
+	if _, err := BankDrumKits(filepath.Join(t.TempDir(), "nope.sf2")); err == nil {
+		t.Fatal("expected an error for a nonexistent bank")
 	}
 }
 

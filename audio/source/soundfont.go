@@ -3,6 +3,8 @@ package source
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -119,6 +121,48 @@ func loadBank(path string) (*meltysynth.SoundFont, error) {
 	}
 	bankCache[key] = sf
 	return sf, nil
+}
+
+// sfDrumBank is the SF2 bank number reserved for percussion presets. meltysynth
+// pins MIDI channel 9 to it (see its channel.go), so a program change on that
+// channel selects among exactly these presets — which is what makes them "kits".
+const sfDrumBank = 128
+
+// BankPreset names one preset inside a SoundFont for UI listing: the patch
+// number to send as a program change, and the bank author's own label.
+type BankPreset struct {
+	Program int    `json:"program"`
+	Name    string `json:"name"`
+}
+
+// BankDrumKits lists the percussion presets of the bank at path, ordered by
+// program number. Callers get the bank's real kit names ("Standard", "TR-808",
+// "Marching", …) instead of a fixed GS table, which matters for the many banks
+// that ship custom or partial kit sets.
+//
+// The bank is served from the same process-wide cache the synths use, so for a
+// channel already playing that bank this is a map lookup plus a scan of a few
+// hundred preset headers — cheap enough to call on every page render. Passing a
+// path no channel has loaded would pay the full parse, so callers should only
+// ask about banks that are in use.
+func BankDrumKits(path string) ([]BankPreset, error) {
+	sf, err := loadBank(path)
+	if err != nil {
+		return nil, serr.Wrap(err)
+	}
+	kits := make([]BankPreset, 0, 16)
+	for _, p := range sf.Presets {
+		if p.BankNumber != sfDrumBank {
+			continue
+		}
+		// SF2 preset names are fixed-width fields in the file, so trailing pad
+		// characters are common; trim before they reach a dropdown.
+		kits = append(kits, BankPreset{Program: int(p.PatchNumber), Name: strings.TrimSpace(p.Name)})
+	}
+	// Preset order in the file is arbitrary (authoring-tool dependent); program
+	// order is what a player expects to scroll through.
+	sort.Slice(kits, func(i, j int) bool { return kits[i].Program < kits[j].Program })
+	return kits, nil
 }
 
 // NewSFSynth loads (or reuses) the bank at path and builds a synthesizer for

@@ -244,19 +244,24 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 			// Drums reroutes notes to the GM percussion channel — a live
 			// source-param like program, so no rebuild/reload on toggle.
 			toggle(b, "src", ch.ID, "sfont.drums", "Drums", sfontDrums),
-			// Kit picks among the bank's channel-9 percussion presets (GS
-			// numbering). Live like program — it rides the event ring. Always
-			// rendered, even with Drums off: choosing a kit before toggling
-			// drums on is a natural flow, and hiding the select would make the
-			// feature undiscoverable.
+			// Kit picks among the bank's channel-9 percussion presets, listed
+			// with the bank's own preset names (see drumKitOptions). Live like
+			// program — it rides the event ring. Always rendered, even with
+			// Drums off: choosing a kit before toggling drums on is a natural
+			// flow, and hiding the select would make the feature
+			// undiscoverable. A bank switch reloads the page, so the list is
+			// rebuilt for the new bank without any client-side refresh.
 			b.Select("data-role", "sfont-kit", "data-id", id, "title", "Drum kit (channel 9)").R(
 				b.Wrap(func() {
-					for _, kit := range gmDrumKits {
+					for _, kit := range drumKitOptions(sfontPath, sfontKit) {
 						attrs := []string{"value", strconv.Itoa(kit.Prog)}
 						if kit.Prog == sfontKit {
 							attrs = append(attrs, "selected", "selected")
 						}
-						b.Option(attrs...).T(strconv.Itoa(kit.Prog) + " · " + kit.Name + " Kit")
+						// Names come straight from the bank and already read as
+						// kit names ("Orchestra Kit", "Marching Snare"), so no
+						// " Kit" suffix is appended.
+						b.Option(attrs...).T(strconv.Itoa(kit.Prog) + " · " + kit.Name)
 					}
 				}),
 			),

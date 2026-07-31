@@ -11,6 +11,7 @@ type TransportBar struct {
 	Recording bool
 	Scenes    []store.SceneInfo
 	Duplex    bool
+	MetroBPM  string // persisted tempo rendered into the BPM input
 }
 
 // Render satisfies element.Component.
@@ -36,8 +37,11 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 		b.DivClass("metro-box").R(
 			b.ButtonClass("metro-btn", "id", "metro-btn",
 				"title", "Metronome on/off · tap 3+ times to set tempo").T("◆ CLICK"),
+			// The persisted BPM is rendered server-side (not fetched after
+			// load) so the input never flashes a default before settling —
+			// the same single-source-of-truth render the rest of the page uses.
 			b.Input("type", "number", "id", "metro-bpm",
-				"min", "30", "max", "300", "step", "1", "value", "120",
+				"min", "30", "max", "300", "step", "1", "value", t.MetroBPM,
 				"title", "Beats per minute").R(),
 			b.SpanClass("metro-label").T("bpm"),
 			b.Select("id", "metro-beats", "title", "Beats per bar").R(

@@ -921,6 +921,26 @@
     clearTimeout(metroTimer);
   }
 
+  // Persist the tempo so it survives a restart. The server renders the saved
+  // value back into the input on page load, so this is the only direction the
+  // client ever syncs. A dedicated 400ms trailing debounce (not the shared
+  // 30ms param window) because tap-tempo rewrites the value roughly twice a
+  // second — one write lands after the run settles instead of one per tap.
+  var metroSaveTimer = null;
+  function saveMetroBpm() {
+    clearTimeout(metroSaveTimer);
+    metroSaveTimer = setTimeout(function () {
+      var bpm = Math.round(parseFloat(metroBpm.value));
+      if (!isFinite(bpm)) return; // half-typed edits just don't persist
+      bpm = Math.max(30, Math.min(300, bpm));
+      post("/api/setting", { key: "metro.bpm", value: String(bpm) });
+    }, 400);
+  }
+
+  // "change" (not "input") so typing persists on commit — Enter, blur, or a
+  // spinner click — never per keystroke.
+  if (metroBpm) metroBpm.addEventListener("change", saveMetroBpm);
+
   // Tap tempo shares the CLICK button with on/off rather than adding a
   // second button. Every press is timestamped; presses 1 and 2 toggle as
   // usual, and only a 3rd press inside the 2s window confirms a tap run —
@@ -954,6 +974,8 @@
     var span = tapTimes[tapTimes.length - 1] - tapTimes[0];
     var bpm = Math.round((60000 * (tapTimes.length - 1)) / span);
     metroBpm.value = Math.max(30, Math.min(300, bpm));
+    // Programmatic value writes fire no "change" event, so persist explicitly.
+    saveMetroBpm();
     // Reuse the beat flash (dim strength) as visual tap feedback.
     metroBtn.dataset.beat = "2";
     setTimeout(function () { metroBtn.removeAttribute("data-beat"); }, 110);

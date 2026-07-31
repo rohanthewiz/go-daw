@@ -89,6 +89,7 @@ func Start(cfg *config.Config, engine *audio.Engine, st *store.Store) error {
 	api.Post("/record/start", srv.recordStartHandler)
 	api.Post("/record/stop", srv.recordStopHandler)
 	api.Post("/click", srv.clickHandler)
+	api.Post("/setting", srv.settingHandler)
 
 	go srv.meterLoop()
 

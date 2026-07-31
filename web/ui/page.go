@@ -15,6 +15,7 @@ type PageData struct {
 	Duplex     bool
 	Soundbanks []string // .sf2 paths offered in each channel's sfont selector
 	MidiFiles  []string // .mid paths offered in each channel's midi selector
+	MetroBPM   string   // persisted metronome tempo, already validated/defaulted
 }
 
 // MixerPage renders the complete console HTML document. The page is fully
@@ -37,6 +38,7 @@ func MixerPage(d PageData) string {
 				Recording: d.Recording,
 				Scenes:    d.Scenes,
 				Duplex:    d.Duplex,
+				MetroBPM:  d.MetroBPM,
 			}),
 
 			b.DivClass("console").R(

@@ -61,6 +61,7 @@ func (srv *Server) pageHandler(ctx rweb.Context) error {
 		Duplex:     srv.engine.Duplex,
 		Soundbanks: srv.listSoundbanks(),
 		MidiFiles:  srv.listMidiFiles(),
+		MetroBPM:   srv.metroBPM(),
 	})
 	return ctx.WriteHTML(html)
 }
@@ -593,6 +594,69 @@ func (srv *Server) clickHandler(ctx rweb.Context) error {
 	}
 	srv.engine.TriggerClick(req.Accent)
 	return ok(ctx)
+}
+
+// ---- settings ----
+
+type settingReq struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// settingValidators whitelists the keys the client may persist and validates
+// each one's value. A generic key-value endpoint without this gate would let
+// any POST grow the settings table unboundedly; with it, adding a new
+// persisted preference is one entry here plus a client-side save call.
+var settingValidators = map[string]func(value string) error{
+	"metro.bpm": func(value string) error {
+		bpm, err := strconv.Atoi(value)
+		if err != nil {
+			return serr.Wrap(err, "msg", "bpm must be an integer")
+		}
+		// Same range the BPM input and the client-side clamp enforce; the
+		// server re-checks because the page renders this value back into the
+		// input on every load.
+		if bpm < 30 || bpm > 300 {
+			return serr.New("bpm out of range", "bpm", value)
+		}
+		return nil
+	},
+}
+
+// settingHandler persists one UI preference. Saves are discrete user actions
+// (a committed edit or a finished tap run — the client debounces), so like
+// tutorial passes each post simply upserts its row.
+func (srv *Server) settingHandler(ctx rweb.Context) error {
+	req, err := decodeBody[settingReq](ctx)
+	if err != nil {
+		return fail(ctx, err, 400)
+	}
+	validate, known := settingValidators[req.Key]
+	if !known {
+		return fail(ctx, serr.New("unknown setting key", "key", req.Key), 400)
+	}
+	if err := validate(req.Value); err != nil {
+		return fail(ctx, serr.Wrap(err, "key", req.Key), 400)
+	}
+	if err := srv.store.SetSetting(req.Key, req.Value); err != nil {
+		return fail(ctx, err, 500)
+	}
+	return ok(ctx)
+}
+
+// metroBPM reads the persisted metronome tempo for page render, falling back
+// to 120 when unset or unreadable — a missing preference must never block the
+// mixer page.
+func (srv *Server) metroBPM() string {
+	v, found, err := srv.store.GetSetting("metro.bpm")
+	if err != nil {
+		logger.LogErr(err, "msg", "reading metro.bpm; using default")
+		return "120"
+	}
+	if !found {
+		return "120"
+	}
+	return v
 }
 
 func clamp(v, lo, hi float64) float64 {

@@ -58,11 +58,81 @@ A plugin is a `package main` that exports one symbol:
 func NewModule() module.AudioModule
 ```
 
-See `plugins/src/flanger/` for a complete example. Build it with:
+That's the entire contract. Everything else — the UI dropdown entry,
+auto-generated parameter sliders, chain insertion, and scene persistence —
+comes for free from the `AudioModule` interface. There is no registration
+code to write: the loader globs `plugins/*.so` at startup, looks up
+`NewModule`, and registers the factory under the module's `Name()`.
+
+### Walkthrough: the Bass Xpander (`plugins/src/bass_xpander/`)
+
+A bass enhancer that adds tanh-generated harmonics and a flip-flop
+sub-octave under a crossover frequency. It shows every part of the
+contract in one file.
+
+**1. Create the source under this repo** at `plugins/src/<name>/main.go`.
+It must be `package main` (with an empty `func main()` so `go build ./...`
+still passes) and live in this module — see the toolchain gotcha below.
+
+**2. Hold parameters in atomic cells.** `Process` runs on the audio thread
+while the web UI writes params from HTTP handlers, so back every parameter
+with a `dsp.ParamCell` (a lock-free atomic float):
+
+```go
+type BassXpander struct {
+	xover  *dsp.ParamCell // crossover Hz
+	drive  *dsp.ParamCell // waveshaper gain
+	amount *dsp.ParamCell // harmonics level
+	sub    *dsp.ParamCell // sub-octave level
+	// ... fixed-size DSP state (filter memories, envelope, flip-flop)
+}
+
+func NewModule() module.AudioModule {
+	return &BassXpander{
+		xover:  dsp.NewParam(150),
+		drive:  dsp.NewParam(4),
+		amount: dsp.NewParam(0.5),
+		sub:    dsp.NewParam(0.4),
+	}
+}
+```
+
+**3. Implement the five interface methods:**
+
+- `Name() string` — registry key and UI label (`"bass_xpander"`).
+- `Init(sampleRate float64, maxBlock int) error` — called once on the
+  control plane; do **all** allocation here, sized for `maxBlock`.
+- `Process(l, r []float32)` — transform the block in place. Realtime
+  rules: no allocation, locks, logging, or blocking. Read each ParamCell
+  once per block, not per sample.
+- `Params() []module.ParamSpec` — metadata the web UI turns into sliders
+  (min/max/default/unit, `ScaleLog` for frequency-like knobs):
+
+```go
+func (b *BassXpander) Params() []module.ParamSpec {
+	return []module.ParamSpec{
+		{ID: "xover", Name: "Crossover", Unit: "Hz", Min: 50, Max: 400, Default: 150, Scale: module.ScaleLog},
+		{ID: "drive", Name: "Drive", Min: 1, Max: 10, Default: 4},
+		{ID: "amount", Name: "Harmonics", Min: 0, Max: 1, Default: 0.5},
+		{ID: "sub", Name: "Sub Level", Min: 0, Max: 1, Default: 0.4},
+	}
+}
+```
+
+- `SetParam(id, value)` / `GetParam(id)` — switch on the param ID and
+  forward to the matching ParamCell.
+
+**4. Build the `.so`** (from the repo root, same toolchain as the binary):
 
 ```bash
-go build -buildmode=plugin -o plugins/flanger.so ./plugins/src/flanger
+go build -buildmode=plugin -o plugins/bass_xpander.so ./plugins/src/bass_xpander
 ```
+
+**5. Restart `godaw`.** The startup log shows
+`Loaded plugin module name=bass_xpander`, and the module appears in every
+channel's module dropdown with its four sliders. To verify outside the
+app, `go run ./arch_test_scripts/plugin_smoke` loads all plugins and runs
+a block through each.
 
 **Go plugin gotchas (read before debugging a load failure):**
 
@@ -106,7 +176,7 @@ record/       SPSC ring, WAV writer, recorder lifecycle
 store/        bytdb scene persistence
 tutorial/     built-in piano lesson catalog (pure data, served as JSON)
 web/          rweb server, handlers, SSE meters, element UI, styl styles
-plugins/src/  example external plugin (flanger)
+plugins/src/  example external plugins (flanger, bass_xpander)
 ```
 
 ## Tests

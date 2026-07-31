@@ -113,12 +113,18 @@
 
     if (el.id === "rec-btn") {
       if (recCountTimers.length) {
-        // Pressing REC mid-count aborts the take before it starts.
+        // Pressing REC mid-count aborts the take before it starts;
+        // shift-click instead skips the rest of the bar and falls
+        // through to record immediately.
         cancelRecCountIn();
-        return;
+        if (!e.shiftKey) return;
       }
       if (el.dataset.on === "1") {
         post("/api/record/stop").then(function () { el.dataset.on = "0"; });
+      } else if (e.shiftKey) {
+        // Shift-click bypasses the count-in — instant record, e.g. to
+        // capture something already playing.
+        post("/api/record/start").then(function () { el.dataset.on = "1"; });
       } else {
         var recTimeEl = document.getElementById("rec-time");
         var beats = parseInt(document.getElementById("metro-beats").value, 10) || 4;

@@ -20,7 +20,7 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 
 		b.Wrap(func() {
 			attrs := []string{"id", "rec-btn",
-				"title", "Record · starts after a one-bar count-in (press again to abort)"}
+				"title", "Record · starts after a one-bar count-in (press again to abort, shift-click to skip the count-in)"}
 			if t.Recording {
 				attrs = append(attrs, "data-on", "1")
 			}

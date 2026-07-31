@@ -820,17 +820,63 @@
     metroTimer = setTimeout(metroTick, Math.max(0, metroNext - performance.now()));
   }
 
+  function metroStart() {
+    metroOn = true;
+    metroBtn.dataset.on = "1";
+    metroBeat = 0; // always restart on the accent
+    metroNext = performance.now();
+    metroTick();
+  }
+
+  function metroStop() {
+    metroOn = false;
+    metroBtn.dataset.on = "0";
+    clearTimeout(metroTimer);
+  }
+
+  // Tap tempo shares the CLICK button with on/off rather than adding a
+  // second button. Every press is timestamped; presses 1 and 2 toggle as
+  // usual, and only a 3rd press inside the 2s window confirms a tap run —
+  // from then on presses set BPM instead of toggling. Requiring three
+  // presses keeps an accidental quick double-toggle from rewriting the
+  // tempo, and because two toggles net back to the starting state, the
+  // tap run begins from whatever on/off state the user was already in.
+  // A pause longer than the window ends the run; the next press toggles.
+  var tapTimes = [];
+  var TAP_GAP_MS = 2000; // slowest tappable tempo = 30bpm, matching the input's min
+
   if (metroBtn) metroBtn.addEventListener("click", function () {
+    var now = performance.now();
+    if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > TAP_GAP_MS) {
+      tapTimes = [];
+    }
+    tapTimes.push(now);
+    // Keep only the last 5 taps (4 gaps): averaging a short window means a
+    // mid-run tempo correction takes hold within a few taps instead of
+    // being dragged back by the whole history.
+    if (tapTimes.length > 5) tapTimes.shift();
+
+    if (tapTimes.length < 3) {
+      if (metroOn) metroStop();
+      else metroStart();
+      return;
+    }
+
+    // Confirmed tap run: mean gap over the window → BPM. (last-first)/(n-1)
+    // is the mean of the individual gaps without building the list.
+    var span = tapTimes[tapTimes.length - 1] - tapTimes[0];
+    var bpm = Math.round((60000 * (tapTimes.length - 1)) / span);
+    metroBpm.value = Math.max(30, Math.min(300, bpm));
+    // Reuse the beat flash (dim strength) as visual tap feedback.
+    metroBtn.dataset.beat = "2";
+    setTimeout(function () { metroBtn.removeAttribute("data-beat"); }, 110);
+    // If the metronome is running, re-phase it: the next beat lands one
+    // interval after the last tap, so the click falls in step with the
+    // hand instead of keeping its old phase at the new tempo.
     if (metroOn) {
-      metroOn = false;
-      metroBtn.dataset.on = "0";
       clearTimeout(metroTimer);
-    } else {
-      metroOn = true;
-      metroBtn.dataset.on = "1";
-      metroBeat = 0; // always restart on the accent
-      metroNext = performance.now();
-      metroTick();
+      metroNext = now + metroIntervalMs();
+      metroTimer = setTimeout(metroTick, Math.max(0, metroNext - performance.now()));
     }
   });
 

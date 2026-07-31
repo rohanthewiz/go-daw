@@ -34,7 +34,7 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 		// parameter dispatcher leaves them alone.
 		b.DivClass("metro-box").R(
 			b.ButtonClass("metro-btn", "id", "metro-btn",
-				"title", "Metronome on/off").T("◆ CLICK"),
+				"title", "Metronome on/off · tap 3+ times to set tempo").T("◆ CLICK"),
 			b.Input("type", "number", "id", "metro-bpm",
 				"min", "30", "max", "300", "step", "1", "value", "120",
 				"title", "Beats per minute").R(),

@@ -67,6 +67,7 @@ func Start(cfg *config.Config, engine *audio.Engine, st *store.Store) error {
 	api.Get("/modules", srv.modulesHandler)
 	api.Get("/scenes", srv.scenesListHandler)
 	api.Get("/lessons", srv.lessonsHandler)
+	api.Get("/tour", srv.tourHandler)
 	api.Get("/tutorial/progress", srv.tutorialProgressHandler)
 	api.Post("/tutorial/pass", srv.tutorialPassHandler)
 	api.Get("/soundfonts", srv.soundfontsHandler)

@@ -36,7 +36,10 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 
 		// Processing sections live in <details> so a strip stays scannable;
 		// the browser remembers open state per element while the page lives.
-		b.DetailsClass("sect").R(
+		// data-sect names each one so the tour can address a section by what it
+		// is rather than by its position among its siblings — reordering the
+		// chain then can't silently re-aim a spotlight at the wrong controls.
+		b.DetailsClass("sect", "data-sect", "gate").R(
 			b.Summary().T("Gate"),
 			toggle(b, "ch", id, "gate.enabled", "On", ch.Gate.Enabled.Load()),
 			slider(b, "ch", id, "gate.threshold", "Thresh", -90, 0, 1, ch.Gate.OpenThreshDB.Get(), ""),
@@ -46,7 +49,7 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 			slider(b, "ch", id, "gate.release", "Rel", 1, 2000, 1, ch.Gate.ReleaseMs.Get(), "log"),
 		),
 
-		b.DetailsClass("sect").R(
+		b.DetailsClass("sect", "data-sect", "filters").R(
 			b.Summary().T("Filters"),
 			toggle(b, "ch", id, "hpf.enabled", "HPF", ch.HPF.Enabled.Load()),
 			slider(b, "ch", id, "hpf.freq", "HP Frq", 20, 2000, 1, ch.HPF.Freq.Get(), "log"),
@@ -54,7 +57,7 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 			slider(b, "ch", id, "lpf.freq", "LP Frq", 200, 20000, 1, ch.LPF.Freq.Get(), "log"),
 		),
 
-		b.DetailsClass("sect", "open", "open").R(
+		b.DetailsClass("sect", "data-sect", "eq", "open", "open").R(
 			b.Summary().T("EQ"),
 			b.Wrap(func() {
 				for band := 0; band < 3; band++ {
@@ -70,7 +73,7 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 			}),
 		),
 
-		b.DetailsClass("sect").R(
+		b.DetailsClass("sect", "data-sect", "comp").R(
 			b.Summary().T("Comp"),
 			toggle(b, "ch", id, "comp.enabled", "On", ch.Comp.Enabled.Load()),
 			slider(b, "ch", id, "comp.threshold", "Thresh", -60, 0, 1, ch.Comp.ThresholdDB.Get(), ""),
@@ -81,7 +84,7 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 			slider(b, "ch", id, "comp.makeup", "Makeup", 0, 24, 0.5, ch.Comp.MakeupDB.Get(), ""),
 		),
 
-		b.DetailsClass("sect").R(
+		b.DetailsClass("sect", "data-sect", "reverb").R(
 			b.Summary().T("Reverb"),
 			toggle(b, "ch", id, "reverb.enabled", "On", ch.Reverb.Enabled.Load()),
 			slider(b, "ch", id, "reverb.predelay", "PreDly", 0, 250, 1, ch.Reverb.PreDelayMs.Get(), ""),
@@ -320,7 +323,7 @@ func (cs ChannelStrip) renderModules(b *element.Builder) (x any) {
 	ch := cs.Ch
 	id := strconv.Itoa(ch.ID)
 
-	b.DetailsClass("sect", "open", "open").R(
+	b.DetailsClass("sect", "data-sect", "modules", "open", "open").R(
 		b.Summary().T("Modules"),
 		b.Wrap(func() {
 			for idx, m := range ch.Modules() {

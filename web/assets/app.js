@@ -1013,6 +1013,281 @@
     }
   });
 
+  // ---- getting-started tour ------------------------------------------------
+  // The server owns the step catalog (/api/tour, already filtered to what this
+  // instance can demonstrate); this block owns everything positional. Each step
+  // names a live element by selector, so the tour spotlights the real control
+  // rather than a picture of it — and a selector that stops matching skips its
+  // step instead of describing something that isn't on screen.
+  //
+  // Two deliberate choices shape the rest of the code:
+  //
+  //   - The overlay never blocks the page. The dim is one element's outward
+  //     box-shadow, so the spotlit control stays clickable and "try it now"
+  //     tips are honest.
+  //   - Because it doesn't block, the reader can trigger a structural change
+  //     (swap a source, add a module) that reloads the page mid-tour. The step
+  //     index rides sessionStorage, so the tour reopens where it left off
+  //     instead of punishing curiosity.
+
+  var tourRoot = document.getElementById("tour");
+  if (tourRoot) {
+    var tourRing = document.getElementById("tour-ring");
+    var tourBalloon = document.getElementById("tour-balloon");
+    var tourSectionEl = document.getElementById("tour-section");
+    var tourCountEl = document.getElementById("tour-count");
+    var tourTitleEl = document.getElementById("tour-title");
+    var tourBodyEl = document.getElementById("tour-body");
+    var tourTipEl = document.getElementById("tour-tip");
+    var tourDotsEl = document.getElementById("tour-dots");
+
+    var tourSteps = [];    // catalog, fetched once at page load
+    var tourIdx = -1;      // current step; -1 = tour not running
+    var tourOpened = [];   // <details> this tour opened, closed again on leaving
+
+    var RING_PAD = 6;      // breathing room between the target and the ring
+    var BALLOON_GAP = 14;  // between the ring and the balloon
+    var EDGE = 12;         // minimum distance from the viewport edge
+
+    function tourActive() { return tourIdx >= 0; }
+
+    // -- collapsed sections --------------------------------------------------
+    // Most channel-strip sections ship folded. Opening the ancestors of a
+    // target (and closing them again on the way out) keeps a walk down the
+    // strip readable without leaving six sections sprung open behind it.
+
+    function openSections(el) {
+      var d = el.closest("details");
+      while (d) {
+        if (!d.open) {
+          d.open = true;
+          tourOpened.push(d);
+        }
+        d = d.parentElement ? d.parentElement.closest("details") : null;
+      }
+    }
+
+    function restoreSections() {
+      tourOpened.forEach(function (d) { d.open = false; });
+      tourOpened = [];
+    }
+
+    // -- geometry ------------------------------------------------------------
+
+    function clamp(v, lo, hi) {
+      return hi < lo ? lo : Math.max(lo, Math.min(hi, v));
+    }
+
+    function placeRing(el) {
+      if (!el) {
+        // No target: park a zero-size ring mid-viewport. The shadow still dims
+        // the page (the point of a welcome card), and the border collapses to
+        // nothing rather than leaving a dot floating in the middle.
+        tourRing.dataset.on = "0";
+        tourRing.style.left = window.innerWidth / 2 + "px";
+        tourRing.style.top = window.innerHeight / 2 + "px";
+        tourRing.style.width = "0px";
+        tourRing.style.height = "0px";
+        return;
+      }
+      var r = el.getBoundingClientRect();
+      tourRing.dataset.on = "1";
+      tourRing.style.left = r.left - RING_PAD + "px";
+      tourRing.style.top = r.top - RING_PAD + "px";
+      tourRing.style.width = r.width + RING_PAD * 2 + "px";
+      tourRing.style.height = r.height + RING_PAD * 2 + "px";
+    }
+
+    // Try the step's preferred side first, then the others in a fixed order,
+    // and take the first that fits the viewport whole. Only if none fits does
+    // the balloon fall back to the preferred side clamped into view — better a
+    // slightly overlapping balloon than one hanging off the screen.
+    function placeBalloon(el, place) {
+      var b = tourBalloon.getBoundingClientRect();
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var left, top;
+
+      if (!el) {
+        left = (vw - b.width) / 2;
+        top = (vh - b.height) / 2;
+      } else {
+        var r = el.getBoundingClientRect();
+        var at = {
+          below: { left: r.left + r.width / 2 - b.width / 2, top: r.bottom + BALLOON_GAP },
+          above: { left: r.left + r.width / 2 - b.width / 2, top: r.top - BALLOON_GAP - b.height },
+          right: { left: r.right + BALLOON_GAP, top: r.top + r.height / 2 - b.height / 2 },
+          left: { left: r.left - BALLOON_GAP - b.width, top: r.top + r.height / 2 - b.height / 2 },
+        };
+        var order = [place || "below", "below", "right", "above", "left"];
+        var pick = at[order[0]] || at.below;
+        for (var i = 0; i < order.length; i++) {
+          var c = at[order[i]];
+          if (!c) continue;
+          // Only the placement axis has to fit outright; the other is clamped
+          // below, which never pushes the balloon back over its target.
+          var fits = (order[i] === "below" || order[i] === "above")
+            ? c.top >= EDGE && c.top + b.height <= vh - EDGE
+            : c.left >= EDGE && c.left + b.width <= vw - EDGE;
+          if (fits) { pick = c; break; }
+        }
+        left = pick.left;
+        top = pick.top;
+      }
+
+      tourBalloon.style.left = clamp(left, EDGE, vw - b.width - EDGE) + "px";
+      tourBalloon.style.top = clamp(top, EDGE, vh - b.height - EDGE) + "px";
+    }
+
+    // Re-run placement without re-running step selection. Bound to scroll
+    // (capture, so the horizontally scrolling channel rack counts too) and
+    // resize, and a no-op while the tour is closed.
+    function tourReposition() {
+      if (!tourActive()) return;
+      var step = tourSteps[tourIdx];
+      var el = step && step.target ? document.querySelector(step.target) : null;
+      placeRing(el);
+      placeBalloon(el, step && step.place);
+    }
+    window.addEventListener("scroll", tourReposition, true);
+    window.addEventListener("resize", tourReposition);
+
+    // -- painting ------------------------------------------------------------
+
+    function paintDots() {
+      tourDotsEl.innerHTML = "";
+      tourSteps.forEach(function (s, i) {
+        var dot = document.createElement("button");
+        dot.className = "tour-dot";
+        dot.title = s.title;
+        if (i < tourIdx) dot.dataset.done = "1";
+        if (i === tourIdx) dot.dataset.cur = "1";
+        dot.addEventListener("click", function () { tourGo(i, i > tourIdx ? 1 : -1); });
+        tourDotsEl.appendChild(dot);
+      });
+    }
+
+    function paintStep(step, el) {
+      tourSectionEl.textContent = "◈ " + step.section;
+      tourCountEl.textContent = tourIdx + 1 + " / " + tourSteps.length;
+      tourTitleEl.textContent = step.title;
+      tourBodyEl.textContent = step.body;
+      tourTipEl.textContent = step.tip || "";
+      tourTipEl.dataset.on = step.tip ? "1" : "0";
+      document.getElementById("tour-back").disabled = tourIdx === 0;
+      document.getElementById("tour-next").textContent =
+        tourIdx === tourSteps.length - 1 ? "Done" : "Next";
+      paintDots();
+
+      // Measure after the text lands: the balloon's height depends on it.
+      placeRing(el);
+      placeBalloon(el, step.place);
+    }
+
+    // -- navigation ----------------------------------------------------------
+
+    // Move to step i, searching onward in `dir` past any step whose target is
+    // gone or hidden — a channel whose source was switched no longer has an
+    // oscillator row, and a step about one is not worth stopping on.
+    function tourGo(i, dir) {
+      dir = dir || 1;
+      restoreSections();
+
+      while (i >= 0 && i < tourSteps.length) {
+        var step = tourSteps[i];
+        if (!step.target) {
+          tourIdx = i;
+          tourShow(step, null);
+          return;
+        }
+        var el = document.querySelector(step.target);
+        if (el) {
+          // Open collapsed ancestors before measuring: a control inside a
+          // folded section reports zero height and would look hidden.
+          openSections(el);
+          el.scrollIntoView({ block: "center", inline: "center" });
+          if (el.getBoundingClientRect().height > 0) {
+            tourIdx = i;
+            tourShow(step, el);
+            return;
+          }
+          restoreSections(); // genuinely hidden — leave the section as found
+        }
+        i += dir;
+      }
+
+      // Off the end forward means the reader finished; off the start backward
+      // just means Back from the first usable step, so re-enter from the top.
+      if (dir > 0) tourEnd(true);
+      else tourGo(0, 1);
+    }
+
+    function tourShow(step, el) {
+      paintStep(step, el);
+      try { sessionStorage.setItem("tour-step", String(tourIdx)); } catch (_) {}
+    }
+
+    function tourStart(i) {
+      if (!tourSteps.length) return;
+      tourRoot.dataset.open = "1";
+      tourGo(clamp(i || 0, 0, tourSteps.length - 1), 1);
+    }
+
+    // done=true records the tour as seen so it stops auto-opening; dismissing
+    // it early counts too, because someone who closed it once does not want it
+    // reopening on every page reload.
+    function tourEnd(done) {
+      restoreSections();
+      tourIdx = -1;
+      tourRoot.dataset.open = "0";
+      try { sessionStorage.removeItem("tour-step"); } catch (_) {}
+      if (done && !tourRoot.dataset.seen) {
+        tourRoot.dataset.seen = "1";
+        post("/api/setting", { key: "tour.seen", value: "1" });
+      }
+    }
+
+    document.getElementById("tour-btn").addEventListener("click", function () {
+      if (tourActive()) tourEnd(true);
+      else tourStart(0);
+    });
+    document.getElementById("tour-next").addEventListener("click", function () {
+      if (tourIdx >= tourSteps.length - 1) tourEnd(true);
+      else tourGo(tourIdx + 1, 1);
+    });
+    document.getElementById("tour-back").addEventListener("click", function () {
+      tourGo(tourIdx - 1, -1);
+    });
+    document.getElementById("tour-close").addEventListener("click", function () {
+      tourEnd(true);
+    });
+
+    // Arrow keys page through, Esc leaves. Skipped while a form control has
+    // focus so arrows still nudge the slider or spinner the reader is holding
+    // — the tour is meant to be used with one hand on the console.
+    document.addEventListener("keydown", function (e) {
+      if (!tourActive() || e.metaKey || e.ctrlKey || e.altKey) return;
+      var t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
+      if (e.key === "Escape") { e.preventDefault(); tourEnd(true); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); tourGo(tourIdx + 1, 1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); tourGo(tourIdx - 1, -1); }
+    });
+
+    fetch("/api/tour").then(function (r) { return r.json(); }).then(function (d) {
+      tourSteps = d || [];
+      if (!tourSteps.length) return;
+
+      // A stored index means the page reloaded under a running tour (the
+      // reader changed a source or added a module), so resume there. Otherwise
+      // a profile that has never seen the tour gets it opened for them —
+      // that's the whole point of a getting-started tour.
+      var resume = null;
+      try { resume = sessionStorage.getItem("tour-step"); } catch (_) {}
+      if (resume !== null) tourStart(parseInt(resume, 10) || 0);
+      else if (!tourRoot.dataset.seen) tourStart(0);
+    }).catch(function (e) { console.error("tour", e); });
+  }
+
   // ---- meters via SSE ------------------------------------------------------
 
   // Map a linear level onto meter height through dB: (db+60)/60 puts -60dB

@@ -10,6 +10,7 @@ import (
 	"github.com/rohanthewiz/go-daw/audio/source"
 	"github.com/rohanthewiz/go-daw/mixer"
 	"github.com/rohanthewiz/go-daw/module"
+	"github.com/rohanthewiz/go-daw/tour"
 	"github.com/rohanthewiz/go-daw/tutorial"
 	"github.com/rohanthewiz/go-daw/web/ui"
 	"github.com/rohanthewiz/logger"
@@ -66,6 +67,10 @@ func (srv *Server) pageHandler(ctx rweb.Context) error {
 		// Default on: the count-in is the pedagogically safer choice, so a
 		// fresh profile gets it and only an explicit uncheck persists "0".
 		TutCountIn: srv.setting("tut.countin", "1") != "0",
+		// Default off, so a fresh profile is a first visit and the tour opens
+		// itself; finishing or dismissing it persists "1" and it never
+		// auto-opens again.
+		TourSeen: srv.setting("tour.seen", "0") == "1",
 	})
 	return ctx.WriteHTML(html)
 }
@@ -137,6 +142,29 @@ func (srv *Server) modulesHandler(ctx rweb.Context) error {
 // whole tutorial from that snapshot.
 func (srv *Server) lessonsHandler(ctx rweb.Context) error {
 	return ctx.WriteJSON(tutorial.Lessons())
+}
+
+// tourHandler serves the getting-started tour, filtered to what this instance
+// can actually demonstrate. Filtering here rather than in the client keeps the
+// capability checks next to the state that answers them (engine duplex flag,
+// console geometry, the same directory scans the source selectors use) and
+// means the client never has to reason about why a step should be hidden.
+//
+// A filter error means a step names a capability that does not exist — an
+// authoring bug the test suite catches, but if one ever shipped, an unfiltered
+// tour that shows one step too many beats no tour at all.
+func (srv *Server) tourHandler(ctx rweb.Context) error {
+	steps, err := tour.Filter(tour.Available{
+		Duplex:    srv.engine.Duplex,
+		Soundbank: len(srv.listSoundbanks()) > 0,
+		Midi:      len(srv.listSoundbanks()) > 0 && len(srv.listMidiFiles()) > 0,
+		Groups:    len(srv.engine.Console.Groups) > 0,
+	})
+	if err != nil {
+		logger.LogErr(err, "msg", "filtering tour steps; serving the full catalog")
+		return ctx.WriteJSON(tour.Steps())
+	}
+	return ctx.WriteJSON(steps)
 }
 
 // ---- channel parameters ----
@@ -643,6 +671,13 @@ var settingValidators = map[string]func(value string) error{
 			return nil
 		}
 		return serr.New("count-in flag must be 0 or 1", "value", value)
+	},
+	"tour.seen": func(value string) error {
+		switch value {
+		case "0", "1":
+			return nil
+		}
+		return serr.New("tour-seen flag must be 0 or 1", "value", value)
 	},
 }
 

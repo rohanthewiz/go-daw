@@ -23,6 +23,15 @@ A web-controlled digital audio workstation / mixing console in Go for macOS.
 - **Digital memory**: named scenes snapshot the entire console to bytdb (pure-Go embedded DB); recall live without stopping audio. Plus master-bus recording to `recordings/*.wav`.
 - **Virtual piano**: 25-key on-screen keyboard driving a polyphonic synth on any channel — playable by mouse/touch (strike position = velocity), computer keyboard (tracker layout, Z/X octave), or a hardware MIDI keyboard via Web MIDI (device picker, hot-plug, stuck-note panic on unplug).
 - **Piano tutorial**: built-in guided lessons served from `/api/lessons` — scales, first melodies (Mary Had a Little Lamb, Twinkle Twinkle, Ode to Joy), and chord progressions. Target keys get amber guide rings, wrong notes flash red and are counted, chord steps require the full set held at once, and **Listen** plays the lesson through the synth. Any input route (mouse, keys, MIDI) can answer.
+- **Getting-started tour**: a 34-step guided walk over the live console, served
+  from `/api/tour` and launched by **◈ Tour** in the transport bar (it opens
+  itself on a first run). Each step spotlights a real control by CSS selector,
+  auto-opens the collapsed section it lives in, and dims everything else —
+  without blocking the page, so "try it now" tips are actually doable. The step
+  index rides `sessionStorage`, so changing a source mid-tour reloads the page
+  and picks up exactly where you were, and steps whose target is missing or
+  hidden are skipped. The server drops steps this instance can't demonstrate
+  (live input on a playback-only run, SoundFonts with no banks on disk).
 - **Web UI**: rweb server, element-rendered HTML, go-styl (Stylus) styling, SSE-driven meters (~12 Hz), tiny vanilla-JS client.
 
 ## Build & run
@@ -174,6 +183,7 @@ mixer/        Channel/Group/Master strips, console, scene state
 module/       AudioModule interface, registry, .so loader, builtins
 record/       SPSC ring, WAV writer, recorder lifecycle
 store/        bytdb scene persistence
+tour/         built-in getting-started tour (pure data, served as JSON)
 tutorial/     built-in piano lesson catalog (pure data, served as JSON)
 web/          rweb server, handlers, SSE meters, element UI, styl styles
 plugins/src/  example external plugins (flanger, bass_xpander, cross_fader)
@@ -183,7 +193,7 @@ plugins/src/  example external plugins (flanger, bass_xpander, cross_fader)
 
 ```bash
 go test ./...        # DSP sanity (EQ gain, compressor, gate, reverb), polysynth,
-                     # scene round-trip, tutorial catalog invariants
+                     # scene round-trip, tutorial and tour catalog invariants
 ```
 
 Smoke-test programs (engine tone, plugin load, recording) are archived in

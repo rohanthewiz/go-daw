@@ -581,5 +581,155 @@ input.fader
     border-color amber
     color #16181d
 
+// ---- getting-started tour ----
+// The dim is one element's outward box-shadow rather than a full-screen
+// scrim: a 9999px spread darkens everything around the ring while the ring
+// itself stays pointer-events none, so the spotlit control is still clickable
+// and the tour's "try it now" tips are honest. Only the balloon takes input.
+.tour-btn
+  background #2c3446
+  color accent
+  border 1px solid #3d4a66
+  border-radius 4px
+  padding 4px 10px
+  cursor pointer
+  &:hover
+    background #34405a
+
+.tour
+  display none
+  &[data-open="1"]
+    display block
+
+.tour-ring
+  position fixed
+  z-index 100
+  border 2px solid amber
+  border-radius 6px
+  pointer-events none
+  box-shadow 0 0 0 9999px rgba(9, 10, 14, 0.68)
+  // Only the box geometry animates, so the spotlight glides from control to
+  // control instead of teleporting; scroll-driven repositioning lands on the
+  // same numbers and stays still.
+  transition left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease
+  // Targetless steps (the welcome and closing cards) park a zero-size ring
+  // mid-viewport: the page still dims, but no border box floats in the middle.
+  &[data-on="0"]
+    border-color transparent
+
+.tour-balloon
+  position fixed
+  z-index 101
+  width 330px
+  background panel2
+  border 1px solid #6b5620
+  border-radius 8px
+  padding 10px 12px
+  box-shadow 0 12px 34px rgba(0, 0, 0, 0.55)
+
+.tour-head
+  display flex
+  align-items center
+  gap 8px
+  margin-bottom 5px
+
+.tour-section
+  color amber
+  font-size 10px
+  font-weight 700
+  text-transform uppercase
+  letter-spacing 0.5px
+
+.tour-count
+  color inkDim
+  font-size 10px
+  font-variant-numeric tabular-nums
+
+.tour-close
+  margin-left auto
+  background none
+  border none
+  color inkDim
+  font-size 16px
+  line-height 1
+  cursor pointer
+  padding 0 2px
+  &:hover
+    color ink
+
+.tour-title
+  font-size 14px
+  font-weight 700
+  color ink
+  margin-bottom 4px
+
+.tour-body
+  color ink
+  line-height 1.55
+
+// The "try this" line reads as an aside, not as more body copy.
+.tour-tip
+  display none
+  margin-top 7px
+  padding 5px 8px
+  background #2f2a1c
+  border-left 2px solid amber
+  border-radius 0 3px 3px 0
+  color #e6dcc0
+  font-size 11px
+  line-height 1.45
+  &[data-on="1"]
+    display block
+
+.tour-foot
+  display flex
+  flex-wrap wrap
+  align-items center
+  gap 6px
+  margin-top 10px
+  // Direct children only: the dots are buttons too, and this rule's padding
+  // would stretch each one into a bar.
+  > button
+    background panel
+    color ink
+    border 1px solid line
+    border-radius 4px
+    padding 3px 12px
+    cursor pointer
+    &:hover
+      background #333846
+    &:disabled
+      color #4d5261
+      cursor default
+      &:hover
+        background panel
+
+// Dots take the whole first row (a thirty-step tour would otherwise crowd the
+// buttons off the balloon) and double as jump targets.
+.tour-dots
+  flex 0 0 100%
+  display flex
+  flex-wrap wrap
+  gap 4px
+  margin-bottom 2px
+
+.tour-back
+  margin-left auto
+
+.tour-dot
+  width 7px
+  height 7px
+  padding 0
+  border-radius 50%
+  border 1px solid line
+  background transparent
+  cursor pointer
+  &[data-done="1"]
+    background inkDim
+    border-color inkDim
+  &[data-cur="1"]
+    background amber
+    border-color amber
+
 button
   font inherit

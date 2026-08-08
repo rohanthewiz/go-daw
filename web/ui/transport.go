@@ -20,6 +20,11 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 	b.DivClass("transport").R(
 		b.DivClass("brand").T("go-daw"),
 
+		// Next to the brand rather than tucked beside the status dot: on a
+		// first launch this is the control that should be easiest to find.
+		b.ButtonClass("tour-btn", "id", "tour-btn",
+			"title", "Guided tour of the console").T("◈ Tour"),
+
 		b.Wrap(func() {
 			attrs := []string{"id", "rec-btn",
 				"title", "Record · starts after a one-bar count-in (press again to abort, shift-click to skip the count-in)"}

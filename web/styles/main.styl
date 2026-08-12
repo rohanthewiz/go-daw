@@ -1,15 +1,58 @@
 // go-daw mixer stylesheet (Stylus source, compiled by go-styl at startup).
-// Dark studio theme: near-black chassis, panel strips, green/amber/red meters.
+//
+// The surface is modelled on the Soundcraft Ui24R web mixer: a near-black
+// chassis, strips that read as physical modules (recessed slots, silver caps,
+// LED value windows), condensed-bold uppercase legends, and colour-coded
+// processing sections. The palette below is that console's, so the whole page
+// stays inside one hardware vocabulary instead of drifting toward a web form.
+//
+// Two mechanisms do most of the heavy lifting; both are worth knowing before
+// editing anything:
+//
+//  --fam  Each processing section sets a "family" colour (EQ red, dynamics
+//         green, effects blue, input orange, pan cyan) that every slider,
+//         indicator and header bar inside it inherits. Adding a section means
+//         setting one variable, not restyling its contents.
+//
+//  --f    Native range inputs expose no hook for "the travel behind the cap",
+//         so each slider carries --f: a unitless 0..1 position written by the
+//         server at render time and rewritten by app.js on every input event.
+//         The track gradient stops at that point. It is unitless (not a
+//         percentage) so calc() can inset it by half a cap width and keep the
+//         fill edge under the cap rather than running past it at the ends.
 
-bg = #16181d
-panel = #21242c
-panel2 = #2a2e38
-line = #383d4a
-ink = #cdd3e0
-inkDim = #7d8496
-accent = #4da3ff
-green = #37c66a
-amber = #e8c05a
+// ---- palette (Soundcraft Ui24R) -------------------------------------------
+bg       = #16181c   // chassis
+chassis  = #101115   // strip body / behind glass
+panel    = #18191d   // section background
+panel2   = #23252b   // raised control background
+slot     = #0a0b0c   // recessed slider slot
+line     = #0f1113   // hairline between modules
+edge     = #3a3d44   // control border
+edgeLit  = #6a6e78   // button border (the Ui24R's buttons are brightly edged)
+ink      = #c8c9c9
+inkBright = #f9f9f9
+inkDim   = #8d8e90
+
+led      = #00ffff   // cyan value windows
+ledMaster = #e7e840  // the master strip's readout is amber on the real desk
+amber    = #bca633
+red      = #a83b3b
+green    = #47af46
+blue     = #3576b1
+orange   = #c4673a
+gold     = #ecca12
+pink     = #ba5d81
+muteRed  = #b53636
+soloGold = #c3a72d
+vuBg     = #5e6168   // meters sit on light grey, not black
+danger   = #bf4545
+
+// Condensed bold is the console's voice. Avenir Next Condensed ships with
+// macOS, Roboto/Arial Narrow cover the rest; the generic fallback keeps the
+// layout intact if none resolve.
+cond = "Avenir Next Condensed", "Roboto Condensed", "Arial Narrow", "Helvetica Neue", sans-serif
+mono = "SF Mono", "Menlo", "Consolas", monospace
 
 *
   box-sizing border-box
@@ -18,229 +61,495 @@ body
   margin 0
   background bg
   color ink
-  font 12px/1.4 -apple-system, "Helvetica Neue", sans-serif
+  font 12px/1.4 cond
   user-select none
 
-// ---- transport bar ----
+// ---- shared control chrome -------------------------------------------------
+
+// One button look for the whole desk: a brightly edged dark key that lights up
+// in its function's colour when engaged. Everything that is pressable inherits
+// it and then overrides only its lit state.
+button, .btn
+  font 700 11px/1 cond
+  text-transform uppercase
+  letter-spacing 0.6px
+  color ink
+  background linear-gradient(to bottom, #3b3e45, #26282e 52%, #1c1e23)
+  border 1px solid edgeLit
+  border-radius 3px
+  padding 5px 9px
+  cursor pointer
+  text-shadow 0 -1px 0 #000
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(0, 0, 0, 0.6)
+  &:hover
+    background linear-gradient(to bottom, #474b53, #2e3037 52%, #212429)
+  &:active
+    box-shadow inset 0 2px 4px rgba(0, 0, 0, 0.7)
+
+// Selects lose their native chrome and gain a drawn caret (two triangles built
+// from gradients — no image asset, so the stylesheet stays self-contained).
+select, input[type="text"], input[type="number"]
+  font 600 11px/1 cond
+  color ink
+  background panel2
+  border 1px solid #12141a
+  border-radius 3px
+  padding 3px 5px
+  box-shadow inset 0 1px 2px rgba(0, 0, 0, 0.55)
+
+select
+  -webkit-appearance none
+  appearance none
+  padding-right 17px
+  background-image linear-gradient(45deg, transparent 50%, inkDim 50%), linear-gradient(135deg, inkDim 50%, transparent 50%), linear-gradient(to bottom, #2b2e35, #1e2027)
+  background-position calc(100% - 11px) calc(50% + 1px), calc(100% - 7px) calc(50% + 1px), 0 0
+  background-size 4px 4px, 4px 4px, 100% 100%
+  background-repeat no-repeat
+  &:disabled
+    color #55575c
+
+// LED value windows: a dark glass pane with a glowing cyan figure, the way
+// every numeric on the Ui24R is presented.
+.fader-readout, .rec-time, .midi-pos, #metro-bpm, .piano-oct, .tut-progress
+  font 600 11px/1 mono
+  color led
+  background #05070a
+  border 1px solid #000
+  border-radius 2px
+  box-shadow inset 0 1px 3px #000
+  text-shadow 0 0 6px rgba(0, 255, 255, 0.45)
+  font-variant-numeric tabular-nums
+  letter-spacing 0.5px
+
+// A window with nothing to display should be absent, not an empty black slab:
+// the record timer and the lesson counter are both blank until they run. Only
+// these two get the rule — :empty also matches every <input>, which would take
+// the BPM field with it.
+.rec-time:empty, .tut-progress:empty
+  display none
+
+// ---- transport bar ---------------------------------------------------------
+// The Ui24R's top nav is a raised brushed rail: lighter than the chassis, lit
+// along its top edge, with a hard black shadow beneath it.
 .transport
   display flex
   align-items center
-  gap 10px
-  padding 8px 14px
-  background panel2
-  border-bottom 1px solid line
+  gap 8px
+  padding 7px 12px
+  background linear-gradient(to bottom, #33363d, #212329 55%, #16181c)
+  border-bottom 1px solid #000
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.65)
   position sticky
   top 0
   z-index 10
 
 .brand
-  font-weight 700
-  letter-spacing 1px
-  color accent
-  margin-right 6px
+  font 700 15px/1 cond
+  letter-spacing 2px
+  text-transform uppercase
+  color inkBright
+  background linear-gradient(to bottom, #1d1f24, #0d0e11)
+  border 1px solid #000
+  border-radius 3px
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.08)
+  padding 6px 10px
+  margin-right 4px
+
+.tour-btn
+  color #9fc4ee
+  &[data-on="1"]
+    color inkBright
 
 .rec-btn
-  background #3a2026
-  color #ff5d6c
-  border 1px solid #63323c
-  border-radius 4px
-  padding 4px 10px
-  cursor pointer
+  color #e08a8a
   &[data-on="1"]
-    background #c0263a
+    background linear-gradient(to bottom, #d8384a, #a51f31)
+    border-color #e77
     color #fff
+    text-shadow 0 -1px 0 rgba(0, 0, 0, 0.5)
     animation recblink 1s infinite
 
 @keyframes recblink
   50%
-    opacity 0.55
+    opacity 0.6
 
 .rec-time
-  min-width 52px
+  min-width 54px
+  padding 4px 5px
+  text-align center
   color #ff8d99
-  font-variant-numeric tabular-nums
+  text-shadow 0 0 6px rgba(255, 90, 110, 0.5)
 
 .scene-box
   display flex
-  gap 6px
+  gap 5px
   margin-left auto
+  align-items center
+  #scene-name
+    width 110px
+  .danger
+    color #e59a9a
+    &:hover
+      background linear-gradient(to bottom, #5a2b2b, #3a1c1c)
 
 .badge.warn
-  background #4a3b16
-  color #e8c05a
+  font 700 10px/1 cond
+  text-transform uppercase
+  letter-spacing 0.5px
+  background linear-gradient(to bottom, #6b5620, #47390f)
+  color #f0d98a
+  border 1px solid #8a7030
   border-radius 3px
-  padding 2px 8px
+  padding 5px 8px
 
+// Status lamp: unlit grey until the meter stream is up, then a lit green LED.
 .conn-dot
-  color #555
+  color #33363c
+  font-size 13px
   &[data-live="1"]
-    color green
+    color #00eb58
+    text-shadow 0 0 7px rgba(0, 235, 88, 0.7)
 
-// ---- metronome ----
+// ---- metronome -------------------------------------------------------------
 .metro-box
   display flex
   align-items center
-  gap 6px
-  select
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
+  gap 5px
 
 .metro-btn
-  background panel2
   color inkDim
-  border 1px solid line
-  border-radius 4px
-  padding 4px 10px
-  cursor pointer
   &[data-on="1"]
-    background #4a3b16
-    color amber
-    border-color #6b5620
-  // Beat flash, two strengths mirroring the accent/plain click sounds.
-  // These rules sit after data-on so a running metronome's flash wins.
+    background linear-gradient(to bottom, #7a6526, #4a3b16)
+    border-color #b39a42
+    color #f7e6a8
+  // Beat flash, two strengths mirroring the accent/plain click sounds. These
+  // rules sit after data-on so a running metronome's flash wins.
   &[data-beat="1"]
     background amber
-    color #16181d
+    color #16181c
+    border-color #e6cf6a
   &[data-beat="2"]
     background #6b5620
     color #f5e6bd
 
 #metro-bpm
-  width 56px
-  background panel2
-  color ink
-  border 1px solid line
-  border-radius 3px
-  padding 3px 4px
-  font inherit
+  width 52px
+  padding 5px 4px
+  text-align center
 
 .metro-label
   color inkDim
   font-size 10px
-  margin-left -2px
+  text-transform uppercase
 
-// ---- console layout ----
+// ---- console layout --------------------------------------------------------
+// align-items stretch is what makes this read as a console rather than as a
+// column of cards: every strip runs the full height of the tallest one, so all
+// the fader decks line up on one row no matter how much processing is unfolded
+// above them (see .fader-row's margin-top:auto).
 .console
   display flex
-  gap 14px
-  padding 14px
-  align-items flex-start
+  gap 8px
+  padding 10px
+  align-items stretch
 
 .channels
   display flex
-  gap 8px
+  gap 5px
   overflow-x auto
   flex 1
+  align-items stretch
 
 .buses
   display flex
-  gap 8px
+  gap 5px
+  align-items stretch
+  // A hard rule between the input bank and the buses, as on the desk.
+  padding-left 9px
+  border-left 1px solid #000
+  box-shadow inset 1px 0 0 rgba(255, 255, 255, 0.05)
 
-// ---- strips ----
+// ---- strips ----------------------------------------------------------------
+// Each strip is a module face: black body, lit top edge, a groove down the
+// right side where it butts against its neighbour.
+// --rail is the strip's identity colour (the tape strip above the module);
+// --slotlit is the muted version of it that lights the travelled part of the
+// fader slot. The slot stays close to the console's brushed-metal fader so the
+// deck reads as hardware — full-saturation rail colour down there turns the
+// console into a bar chart.
 .strip
-  background panel
-  border 1px solid line
-  border-radius 6px
-  padding 8px
-  width 168px
+  --fam blue
+  --rail orange
+  --slotlit #6a7078
+  background linear-gradient(to bottom, #1b1d22, chassis 90px, #0e0f12)
+  border 1px solid #000
+  border-radius 4px
+  padding 0 6px 7px
+  width 172px
   flex-shrink 0
   display flex
   flex-direction column
-  gap 6px
+  gap 4px
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 6px rgba(0, 0, 0, 0.5)
 
 .strip-group
-  background #232833
+  --rail pink
+  --slotlit #8f6076
 
 .strip-master
-  background #2b2430
-  border-color #4a3f55
+  --rail gold
+  --slotlit #a8912f
+
+// The head is full-bleed against the strip's padding so the coloured rail runs
+// edge to edge, the way the tape strip does above a channel module.
+.strip-head
+  margin 0 -6px 3px
+  border-bottom 1px solid #000
+  border-top 2px solid var(--rail)
+  border-radius 3px 3px 0 0
+  background linear-gradient(to bottom, #2a2d33, #1a1c21)
+  padding 3px 6px 4px
+  text-align center
+
+.strip-no
+  font 700 9px/1 cond
+  letter-spacing 1.4px
+  text-transform uppercase
+  color var(--rail)
 
 .strip-name
-  font-weight 700
-  text-align center
-  padding 2px 0
-  border-bottom 1px solid line
+  font 700 13px/1.25 cond
+  letter-spacing 0.5px
+  color inkBright
+  text-shadow 0 1px 1px #000
+  overflow hidden
+  text-overflow ellipsis
+  white-space nowrap
 
+// Always-on safety limiter: a lit status lamp, not a control.
 .limiter-note
   text-align center
-  color inkDim
-  font-size 10px
+  font 700 9px/1 cond
+  letter-spacing 1px
+  color #f0d98a
+  background linear-gradient(to bottom, #55461c, #322810)
+  border 1px solid #7a642a
+  border-radius 2px
+  padding 3px 0
 
-// ---- sections ----
+// ---- sections --------------------------------------------------------------
+// Family colours. A section only declares --fam; its header bar, sliders and
+// indicators all read it from here.
+.sect[data-sect="gate"], .sect[data-sect="comp"]
+  --fam green
+
+.sect[data-sect="filters"], .sect[data-sect="eq"]
+  --fam red
+
+.sect[data-sect="reverb"], .sect[data-sect="modules"]
+  --fam blue
+
+.src-row
+  --fam orange
+
 .sect
-  background panel2
-  border-radius 4px
-  padding 3px 6px
+  background panel
+  border 1px solid #000
+  border-radius 3px
+  padding 0 5px 3px
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.04)
   > summary
     cursor pointer
-    color inkDim
-    font-weight 600
-    font-size 11px
+    list-style none
+    margin 0 -5px 0
+    padding 4px 6px
+    color ink
+    font 700 10px/1 cond
     text-transform uppercase
-    letter-spacing 0.5px
+    letter-spacing 1px
+    // Colour tab down the left edge of the header, keyed to the family.
+    border-left 3px solid var(--fam)
+    border-radius 2px 2px 0 0
+    background linear-gradient(to bottom, #2c2f36, #1e2026)
+    &::-webkit-details-marker
+      display none
+    &:hover
+      background linear-gradient(to bottom, #35383f, #24272d)
+  &[open] > summary
+    margin-bottom 3px
 
 .eq-band
-  border-top 1px dashed line
+  border-top 1px solid #000
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.04)
   padding-top 3px
   margin-top 3px
 
 .eq-band-head
-  color accent
-  font-size 10px
-  font-weight 700
+  color var(--fam)
+  font 700 9px/1 cond
+  letter-spacing 1.2px
+  text-transform uppercase
 
-// ---- controls ----
+// ---- sliders ---------------------------------------------------------------
+// The slot is drawn on the input's own background rather than on the track
+// pseudo-element: backgrounds are laid out identically by every engine, while
+// the pseudo-element's geometry is not, and the same declaration then serves
+// both the horizontal params and the vertical faders.
+//
+//   ├──6px──┤                     --f is inset by half a cap width so the fill
+//   ▓▓▓▓▓▓▓▓░░░░░░░░░░░░          edge tracks the centre of the cap, not the
+//        ▟█▙  ← cap               left edge of the control.
 .ctl
   display flex
   align-items center
   gap 5px
   margin 3px 0
+  // Legend and value are kept narrow on purpose: the strip is 172px wide and
+  // every pixel not spent on them is travel the operator can actually aim at.
   label
-    width 44px
+    width 36px
     color inkDim
-    font-size 10px
+    font 600 10px/1.2 cond
+    text-transform uppercase
+    letter-spacing 0.3px
     flex-shrink 0
-  input[type="range"]
-    flex 1
-    min-width 0
-    accent-color accent
-    height 14px
   .readout
-    width 40px
+    width 36px
     text-align right
-    font-size 10px
+    font 600 9.5px/1 mono
     color ink
     font-variant-numeric tabular-nums
     flex-shrink 0
 
-.toggle
+input[type="range"]
+  -webkit-appearance none
+  appearance none
+  flex 1
+  min-width 0
+  height 15px
+  background transparent
+  cursor pointer
+  // No ring while dragging with a mouse, but keyboard focus has to be visible
+  // — the slots are dark and a lost focus position is unrecoverable.
+  &:focus
+    outline none
+  &:focus-visible
+    outline 1px solid led
+    outline-offset 1px
+
+
+button:focus-visible, select:focus-visible, input[type="text"]:focus-visible, input[type="number"]:focus-visible, .toggle input:focus-visible
+  outline 1px solid led
+  outline-offset 1px
+
+// Horizontal parameter slots.
+.ctl input[type="range"]
+  background linear-gradient(to right, var(--fam) 0, var(--fam) calc(var(--f, 0) * (100% - 11px) + 5.5px), #05060a calc(var(--f, 0) * (100% - 11px) + 5.5px), #05060a 100%) no-repeat center / 100% 6px
+  border-radius 3px
+  box-shadow inset 0 1px 2px rgba(0, 0, 0, 0.9)
+
+// Controls whose range is symmetric about zero (pan, EQ band gain) read from
+// the middle out: a detent tick at centre and a fill that grows toward the cap
+// in whichever direction it was moved. min()/max() pick the near and far edge
+// of that span without the stylesheet having to know which side the cap is on;
+// they are wrapped in calc() so go-styl passes them through as CSS rather than
+// evaluating them as Stylus maths.
+.ctl-center input[type="range"]
+  background linear-gradient(to right, transparent calc(50% - 1px), #6d7075 calc(50% - 1px), #6d7075 calc(50% + 1px), transparent calc(50% + 1px)) no-repeat center / 100% 11px, linear-gradient(to right, #05060a 0, #05060a calc(min(50%, var(--f, 0) * (100% - 11px) + 5.5px)), var(--fam) calc(min(50%, var(--f, 0) * (100% - 11px) + 5.5px)), var(--fam) calc(max(50%, var(--f, 0) * (100% - 11px) + 5.5px)), #05060a calc(max(50%, var(--f, 0) * (100% - 11px) + 5.5px)), #05060a 100%) no-repeat center / 100% 6px
+
+// Pan runs cyan, as the Ui24R's does, and prints L/C/R rather than a number.
+.ctl-pan
+  --fam #12a0a0
+  .readout
+    color led
+
+// Caps: brushed silver with a milled centre line, dark-edged so they stand off
+// the slot. Both engines' thumb pseudo-elements get the same treatment.
+sliderCap = linear-gradient(to bottom, #fafafa, #cfd0d4 40%, #7e8087 52%, #b7b8bd 64%, #e8e9ec)
+
+.ctl input[type="range"]::-webkit-slider-thumb
+  -webkit-appearance none
+  width 11px
+  height 15px
+  border-radius 2px
+  border 1px solid #05060a
+  background sliderCap
+  box-shadow 0 1px 2px rgba(0, 0, 0, 0.7)
+
+.ctl input[type="range"]::-moz-range-thumb
+  width 11px
+  height 15px
+  border-radius 2px
+  border 1px solid #05060a
+  background sliderCap
+  box-shadow 0 1px 2px rgba(0, 0, 0, 0.7)
+
+input[type="range"]::-webkit-slider-runnable-track
+  background transparent
+  border none
+
+input[type="range"]::-moz-range-track
+  background transparent
+  border none
+
+// ---- indicators (checkbox as lamp) -----------------------------------------
+// The desk has no checkboxes; it has small keys with a lamp in them. The input
+// stays a real checkbox for keyboard and assistive tech and is painted as the
+// lamp.
+.toggle, .tut-countin
   display inline-flex
   align-items center
-  gap 4px
+  gap 5px
+  padding 3px 6px
+  margin 2px 2px 2px 0
+  background linear-gradient(to bottom, #2b2e35, #1d1f25)
+  border 1px solid #000
+  border-radius 3px
   color inkDim
-  font-size 10px
+  font 700 9px/1 cond
+  text-transform uppercase
+  letter-spacing 0.8px
+  cursor pointer
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.06)
   input
-    accent-color green
+    -webkit-appearance none
+    appearance none
+    width 8px
+    height 8px
+    margin 0
+    border-radius 50%
+    background #16181c
+    border 1px solid #000
+    box-shadow inset 0 1px 2px #000
+    cursor pointer
+    &:checked
+      background var(--fam, green)
+      box-shadow 0 0 6px var(--fam, green), inset 0 0 2px rgba(255, 255, 255, 0.6)
+  &:has(input:checked)
+    color inkBright
+    border-color #4a4e57
 
-// ---- source & routing ----
+// ---- source & routing ------------------------------------------------------
 .src-row, .route-row
   display flex
   align-items center
   gap 5px
+  flex-wrap wrap
   label
     color inkDim
-    font-size 10px
+    font 600 10px/1 cond
+    text-transform uppercase
+    letter-spacing 0.5px
   select
     flex 1
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
+    min-width 0
+
+.route-row
+  --fam gold
 
 .src-osc, .src-synth, .src-sfont, .src-midi, .src-wav
   display none
+  flex-basis 100%
   &[data-visible="1"]
     display block
 
@@ -251,123 +560,193 @@ body
     display block
     width 100%
     margin-bottom 3px
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
     font-size 10px
 
-// Transport row: compact square buttons plus the position readout. The play
-// button doubles as the state indicator (data-state set from the SSE stream).
+// Transport row: compact square keys plus the position window. The play key
+// doubles as the state indicator (data-state set from the SSE stream).
 .midi-transport
   display flex
   align-items center
   gap 3px
-  margin 2px 0 4px
+  margin 3px 0 4px
   button
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
-    font-size 11px
-    line-height 1
     padding 3px 6px
-    cursor pointer
-    &:hover
-      background panel
+    font-size 11px
   button[data-state="playing"]
-    background #1f4630
-    border-color green
+    background linear-gradient(to bottom, #2f7a4e, #1a4a2e)
+    border-color #5ada72
+    color #dfffe9
   button[data-state="paused"]
-    background #4a3f1f
-    border-color amber
+    background linear-gradient(to bottom, #7a6526, #4a3f1f)
+    border-color #d7bb50
+    color #f7e6a8
   .midi-pos
     margin-left auto
-    color inkDim
+    padding 3px 4px
     font-size 10px
-    font-variant-numeric tabular-nums
 
 .src-wav
   input[type="text"]
     width 100%
-    background panel2
-    border 1px solid line
-    color ink
-    border-radius 3px
-    padding 2px 4px
+    margin-bottom 3px
 
-// ---- modules ----
+// ---- modules ---------------------------------------------------------------
 .mod
-  border 1px solid line
-  border-radius 4px
+  border 1px solid #000
+  border-left 3px solid var(--fam)
+  border-radius 3px
   padding 3px 5px
   margin 4px 0
-  background panel
+  background linear-gradient(to bottom, #212429, #171a1f)
 
 .mod-head
   display flex
   justify-content space-between
-  font-weight 600
-  color accent
+  align-items center
+  font 700 10px/1 cond
+  text-transform uppercase
+  letter-spacing 0.8px
+  color var(--fam)
 
 .mod-remove
   background none
   border none
-  color #ff5d6c
+  box-shadow none
+  color #e07a86
   cursor pointer
   font-size 13px
+  padding 0 2px
+  &:hover
+    background none
+    color #ff5d6c
 
 .mod-add select
   width 100%
-  background panel2
-  color ink
-  border 1px solid line
-  border-radius 3px
 
-// ---- mute ----
+// ---- mute ------------------------------------------------------------------
+// Full-width key across the strip, dark until engaged and then the console's
+// mute red — the one control that must be readable from across a room.
 .mute-btn
-  background panel2
-  color inkDim
-  border 1px solid line
-  border-radius 4px
-  padding 3px 0
-  cursor pointer
-  font-weight 700
+  padding 6px 0
+  font-size 12px
+  letter-spacing 1.5px
+  color #9a9ca0
   &[data-on="1"]
-    background #b3435c
+    background linear-gradient(to bottom, #d24a4a, muteRed 55%, #8e2626)
+    border-color #e88
     color #fff
+    box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 0 8px rgba(181, 54, 54, 0.55)
 
-// ---- fader & meter ----
+// ---- fader deck ------------------------------------------------------------
+// margin-top:auto pins the deck to the bottom of every strip, so all the caps
+// and meters sit on one line across the console (see .console).
 .fader-row
   display flex
   justify-content center
-  gap 10px
-  padding-top 4px
+  align-items flex-end
+  gap 4px
+  margin-top auto
+  // Full-bleed rule across the strip: it separates the processing above from
+  // the deck below and explains the empty space on a bus strip, which has
+  // little to show between its mute key and its fader.
+  margin-left -6px
+  margin-right -6px
+  padding 8px 6px 0
+  border-top 1px solid #000
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.05)
 
 .fader-wrap
   display flex
   flex-direction column
   align-items center
-  gap 4px
+  gap 5px
 
+.fader-readout
+  padding 4px 6px
+  min-width 52px
+  text-align center
+  font-size 12px
+
+.strip-master .fader-readout
+  color ledMaster
+  text-shadow 0 0 6px rgba(231, 232, 64, 0.45)
+
+// The fader slot: a deep black channel with the travelled portion lit in the
+// strip's rail colour. Same background technique as the horizontal sliders,
+// rotated — the fill is inset by half a cap height at each end.
 input.fader
   writing-mode vertical-lr
   direction rtl
-  width 28px
-  height 170px
-  accent-color accent
+  width 34px
+  height 176px
+  flex none
+  background linear-gradient(to top, var(--slotlit) 0, var(--slotlit) calc(var(--f, 0) * (100% - 22px) + 11px), #05060a calc(var(--f, 0) * (100% - 22px) + 11px), #05060a 100%) no-repeat center / 10px 100%
+  border-radius 5px
+  box-shadow inset 0 0 3px rgba(0, 0, 0, 0.9)
 
-.fader-readout
-  width auto
+// The cap is the one piece of the desk that is light: a tall milled fader knob
+// with a black index line across its middle.
+faderCap = linear-gradient(to bottom, #d6d7db 0, #f2f2f4 12%, #b9babf 42%, #26272b 48%, #26272b 52%, #c9cace 58%, #f0f0f2 86%, #a9aab0 100%)
 
+input.fader::-webkit-slider-thumb
+  -webkit-appearance none
+  width 30px
+  height 22px
+  border-radius 3px
+  border 1px solid #050608
+  background faderCap
+  box-shadow 0 2px 4px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(255, 255, 255, 0.25)
+
+input.fader::-moz-range-thumb
+  width 30px
+  height 22px
+  border-radius 3px
+  border 1px solid #050608
+  background faderCap
+  box-shadow 0 2px 4px rgba(0, 0, 0, 0.75)
+
+// dB legend shared by the fader and the meter beside it. Marks are positioned
+// from the bottom by their share of the fader's travel (rendered server-side),
+// and the ::before is the tick that reaches toward the slot.
+.fader-scale
+  position relative
+  width 20px
+  height 176px
+  flex none
+
+.fader-mark
+  position absolute
+  right 0
+  transform translateY(50%)
+  font 600 8px/1 mono
+  color #6e7076
+  font-variant-numeric tabular-nums
+  &::before
+    content ""
+    position absolute
+    right 100%
+    top 50%
+    width 4px
+    height 1px
+    margin-right 1px
+    background #4a4d53
+
+// ---- meters ----------------------------------------------------------------
+// Console meters read as a column of LEDs on a light grey bezel: the fill is a
+// continuous green→amber→red gradient sized to the full track (so a given dB
+// is always the same colour), and .meter::after lays the black segment grid
+// over the top. Segmenting with an overlay rather than a mask on the fill
+// keeps the LED positions fixed while the fill height animates.
 .meter
   position relative
-  width 14px
-  height 170px
-  background #101216
-  border 1px solid line
-  border-radius 3px
+  width 15px
+  height 176px
+  flex none
+  background vuBg
+  border 1px solid #000
+  border-radius 2px
   overflow hidden
+  box-shadow inset 0 0 4px rgba(0, 0, 0, 0.6), 0 0 0 2px #101115
 
 .meter-rms
   position absolute
@@ -375,8 +754,8 @@ input.fader
   left 0
   right 0
   height 0
-  background linear-gradient(to top, green 0%, green 60%, #e8c05a 82%, #ff5d6c 100%)
-  background-size 100% 170px
+  background linear-gradient(to top, #00a63c 0%, #29c95a 45%, #d8d13a 72%, #e8a33a 86%, #e83b45 100%)
+  background-size 100% 176px
   background-position bottom
 
 .meter-peak
@@ -386,15 +765,26 @@ input.fader
   bottom 0
   height 2px
   background #fff
-  opacity 0.85
+  box-shadow 0 0 4px rgba(255, 255, 255, 0.6)
 
-// ---- virtual piano ----
+.meter::after
+  content ""
+  position absolute
+  top 0
+  right 0
+  bottom 0
+  left 0
+  pointer-events none
+  background repeating-linear-gradient(to top, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 4px, #101115 4px, #101115 6px)
+
+// ---- virtual piano ---------------------------------------------------------
 .piano
-  margin 0 14px 14px
-  background panel
-  border 1px solid line
-  border-radius 6px
+  margin 0 10px 10px
+  background linear-gradient(to bottom, #1b1d22, chassis)
+  border 1px solid #000
+  border-radius 4px
   padding 8px 10px
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 6px rgba(0, 0, 0, 0.5)
 
 .piano-head
   display flex
@@ -403,31 +793,20 @@ input.fader
   margin-bottom 8px
   label
     color inkDim
-    font-size 10px
-  select
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
-  button
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
-    padding 2px 8px
-    cursor pointer
+    font 600 10px/1 cond
+    text-transform uppercase
+    letter-spacing 0.5px
 
 .piano-title
-  font-weight 700
-  color accent
+  font 700 12px/1 cond
+  color amber
   text-transform uppercase
-  letter-spacing 0.5px
-  font-size 11px
+  letter-spacing 1.5px
 
 .piano-oct
-  min-width 26px
+  min-width 30px
+  padding 4px 5px
   text-align center
-  font-variant-numeric tabular-nums
 
 .piano-hint
   margin-left auto
@@ -442,9 +821,10 @@ input.fader
   gap 4px
 
 .midi-dot
-  color #555
+  color #33363c
   &[data-live="1"]
-    color green
+    color #00eb58
+    text-shadow 0 0 7px rgba(0, 235, 88, 0.7)
   &[data-live="err"]
     color #ff8d99
 
@@ -465,38 +845,38 @@ input.fader
 
 .piano-key.white
   flex 1
-  background #e8eaf0
-  border 1px solid #9aa0ad
+  background linear-gradient(to bottom, #fbfbfb, #dfe1e6)
+  border 1px solid #6e727a
   border-top none
-  color #6a7080
+  color #8a8f99
   &[data-on="1"]
-    background accent
-    color #fff
+    background linear-gradient(to bottom, #7fe6ff, #16a6c9)
+    color #04212b
 
 .piano-key.black
   position absolute
   top 0
   height 62%
-  background #14161b
+  background linear-gradient(to bottom, #303339, #0b0c0f)
   border 1px solid #000
   z-index 2
   color #7d8496
   &[data-on="1"]
-    background accent
-    color #fff
+    background linear-gradient(to bottom, #2fc4e8, #0b7b96)
+    color #e8feff
 
 .key-hint
   font-size 9px
   text-transform uppercase
   pointer-events none
 
-// ---- piano tutorial ----
+// ---- piano tutorial --------------------------------------------------------
 // Key cues: the guide ring is amber so it stays readable under both idle key
-// colors and the accent-blue pressed fill (ring + fill can show together); a
-// miss flashes the struck key red. The miss rules sit after the .white/.black
+// colors and the cyan pressed fill (ring + fill can show together); a miss
+// flashes the struck key red. The miss rules sit after the .white/.black
 // blocks so they win the specificity tie against [data-on].
 .piano-key[data-guide="1"]
-  box-shadow inset 0 0 0 3px amber
+  box-shadow inset 0 0 0 3px gold
 
 .piano-key.white[data-miss="1"]
   background #d24856
@@ -507,49 +887,26 @@ input.fader
   color #fff
 
 .tutorial
-  margin 0 14px 14px
-  background panel
-  border 1px solid line
-  border-radius 6px
+  margin 0 10px 10px
+  background linear-gradient(to bottom, #1b1d22, chassis)
+  border 1px solid #000
+  border-radius 4px
   padding 8px 10px
+  box-shadow inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 6px rgba(0, 0, 0, 0.5)
 
 .tut-head
   display flex
   align-items center
   gap 8px
-  select
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
-  button
-    background panel2
-    color ink
-    border 1px solid line
-    border-radius 3px
-    padding 2px 8px
-    cursor pointer
 
 .tut-title
-  font-weight 700
+  font 700 12px/1 cond
   color amber
   text-transform uppercase
-  letter-spacing 0.5px
-  font-size 11px
-
-// Count-in toggle: label wraps the checkbox so the text is a click target too.
-.tut-countin
-  display flex
-  align-items center
-  gap 4px
-  color inkDim
-  font-size 10px
-  cursor pointer
-  user-select none
+  letter-spacing 1.5px
 
 .tut-progress
-  font-variant-numeric tabular-nums
-  color ink
+  padding 4px 6px
 
 .tut-msg
   margin-left auto
@@ -567,35 +924,25 @@ input.fader
 
 .tut-chip
   flex-shrink 0
-  padding 2px 8px
+  padding 3px 8px
   background panel2
-  border 1px solid line
+  border 1px solid #000
   border-radius 10px
-  font-size 10px
+  font 600 10px/1 cond
   color inkDim
   &[data-done="1"]
-    color green
-    border-color green
+    color #5ada72
+    border-color #2f7a4e
   &[data-cur="1"]
     background amber
-    border-color amber
-    color #16181d
+    border-color #e6cf6a
+    color #16181c
 
-// ---- getting-started tour ----
+// ---- getting-started tour --------------------------------------------------
 // The dim is one element's outward box-shadow rather than a full-screen
 // scrim: a 9999px spread darkens everything around the ring while the ring
 // itself stays pointer-events none, so the spotlit control is still clickable
 // and the tour's "try it now" tips are honest. Only the balloon takes input.
-.tour-btn
-  background #2c3446
-  color accent
-  border 1px solid #3d4a66
-  border-radius 4px
-  padding 4px 10px
-  cursor pointer
-  &:hover
-    background #34405a
-
 .tour
   display none
   &[data-open="1"]
@@ -604,10 +951,10 @@ input.fader
 .tour-ring
   position fixed
   z-index 100
-  border 2px solid amber
-  border-radius 6px
+  border 2px solid gold
+  border-radius 4px
   pointer-events none
-  box-shadow 0 0 0 9999px rgba(9, 10, 14, 0.68)
+  box-shadow 0 0 0 9999px rgba(6, 7, 10, 0.7)
   // Only the box geometry animates, so the spotlight glides from control to
   // control instead of teleporting; scroll-driven repositioning lands on the
   // same numbers and stays still.
@@ -621,11 +968,11 @@ input.fader
   position fixed
   z-index 101
   width 330px
-  background panel2
-  border 1px solid #6b5620
-  border-radius 8px
+  background linear-gradient(to bottom, #24272d, #1a1c21)
+  border 1px solid #7a642a
+  border-radius 6px
   padding 10px 12px
-  box-shadow 0 12px 34px rgba(0, 0, 0, 0.55)
+  box-shadow 0 12px 34px rgba(0, 0, 0, 0.65)
 
 .tour-head
   display flex
@@ -634,11 +981,10 @@ input.fader
   margin-bottom 5px
 
 .tour-section
-  color amber
-  font-size 10px
-  font-weight 700
+  color gold
+  font 700 10px/1 cond
   text-transform uppercase
-  letter-spacing 0.5px
+  letter-spacing 1.2px
 
 .tour-count
   color inkDim
@@ -649,22 +995,26 @@ input.fader
   margin-left auto
   background none
   border none
+  box-shadow none
   color inkDim
   font-size 16px
   line-height 1
   cursor pointer
   padding 0 2px
   &:hover
+    background none
     color ink
 
 .tour-title
-  font-size 14px
-  font-weight 700
-  color ink
+  font 700 15px/1.2 cond
+  letter-spacing 0.4px
+  color inkBright
   margin-bottom 4px
 
 .tour-body
   color ink
+  font-family -apple-system, "Helvetica Neue", sans-serif
+  font-size 11.5px
   line-height 1.55
 
 // The "try this" line reads as an aside, not as more body copy.
@@ -673,9 +1023,10 @@ input.fader
   margin-top 7px
   padding 5px 8px
   background #2f2a1c
-  border-left 2px solid amber
+  border-left 2px solid gold
   border-radius 0 3px 3px 0
   color #e6dcc0
+  font-family -apple-system, "Helvetica Neue", sans-serif
   font-size 11px
   line-height 1.45
   &[data-on="1"]
@@ -690,19 +1041,10 @@ input.fader
   // Direct children only: the dots are buttons too, and this rule's padding
   // would stretch each one into a bar.
   > button
-    background panel
-    color ink
-    border 1px solid line
-    border-radius 4px
-    padding 3px 12px
-    cursor pointer
-    &:hover
-      background #333846
+    padding 4px 12px
     &:disabled
       color #4d5261
       cursor default
-      &:hover
-        background panel
 
 // Dots take the whole first row (a thirty-step tour would otherwise crowd the
 // buttons off the balloon) and double as jump targets.
@@ -721,15 +1063,13 @@ input.fader
   height 7px
   padding 0
   border-radius 50%
-  border 1px solid line
+  border 1px solid #4a4e57
   background transparent
+  box-shadow none
   cursor pointer
   &[data-done="1"]
     background inkDim
     border-color inkDim
   &[data-cur="1"]
-    background amber
-    border-color amber
-
-button
-  font inherit
+    background gold
+    border-color gold

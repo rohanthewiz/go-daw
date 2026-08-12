@@ -29,8 +29,14 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 	ch := cs.Ch
 	id := ch.ID
 
-	b.DivClass("strip", "data-strip", strconv.Itoa(id)).R(
-		b.DivClass("strip-name").T(ch.Name()),
+	// data-kind drives the colour of the strip's top rail — inputs, buses and
+	// the master each get their own, the way a console colour-codes the tape
+	// strip above each module.
+	b.DivClass("strip", "data-strip", strconv.Itoa(id), "data-kind", "in").R(
+		b.DivClass("strip-head").R(
+			b.DivClass("strip-no").T(strconv.Itoa(id)),
+			b.DivClass("strip-name").T(ch.Name()),
+		),
 
 		cs.renderSource(b),
 
@@ -126,17 +132,7 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 			b.ButtonClass("mute-btn", attrs...).T("MUTE")
 		}),
 
-		b.DivClass("fader-row").R(
-			b.DivClass("fader-wrap").R(
-				b.InputClass("fader", "type", "range",
-					"data-target", "ch", "data-id", strconv.Itoa(id), "data-param", "gain",
-					"min", "-60", "max", "12", "step", "0.1",
-					"value", fmt.Sprintf("%.1f", ch.GainDB.Get()),
-				).R(),
-				b.SpanClass("readout fader-readout").F("%.1f", ch.GainDB.Get()),
-			),
-			meterHTML(b, "ch-"+strconv.Itoa(id)),
-		),
+		faderDeck(b, "ch", strconv.Itoa(id), ch.GainDB.Get(), "ch-"+strconv.Itoa(id)),
 	)
 	return
 }
@@ -380,32 +376,25 @@ func modSlider(b *element.Builder, chID, modIdx int, spec module.ParamSpec, valu
 		"data-param", spec.ID,
 	}
 	if scale == "log" {
+		pos := logPos(value, spec.Min, spec.Max)
 		attrs = append(attrs,
 			"min", "0", "max", "1000", "step", "1",
-			"value", strconv.Itoa(logPos(value, spec.Min, spec.Max)),
+			"value", strconv.Itoa(pos),
 			"data-log", "1", "data-min", fmtF(spec.Min), "data-max", fmtF(spec.Max),
+			"style", fillStyle(float64(pos), 0, 1000),
 		)
 	} else {
 		step := (spec.Max - spec.Min) / 100
 		attrs = append(attrs,
 			"min", fmtF(spec.Min), "max", fmtF(spec.Max), "step", fmtF(step),
 			"value", fmtF(value),
+			"style", fillStyle(value, spec.Min, spec.Max),
 		)
 	}
 	b.DivClass("ctl").R(
 		b.Label().T(spec.Name),
 		b.Input(attrs...).R(),
-		b.SpanClass("readout").T(fmt.Sprintf("%.1f", value)),
-	)
-	return
-}
-
-// meterHTML renders the vertical meter track for a bus key ("ch-3", "grp-1",
-// "master"): an RMS fill bar plus a peak tick, both driven by SSE.
-func meterHTML(b *element.Builder, key string) (x any) {
-	b.DivClass("meter", "data-meter", key).R(
-		b.DivClass("meter-rms").R(),
-		b.DivClass("meter-peak").R(),
+		b.SpanClass("readout").T(readoutText(value, spec.ID)),
 	)
 	return
 }

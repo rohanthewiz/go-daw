@@ -32,7 +32,14 @@ A web-controlled digital audio workstation / mixing console in Go for macOS.
   and picks up exactly where you were, and steps whose target is missing or
   hidden are skipped. The server drops steps this instance can't demonstrate
   (live input on a playback-only run, SoundFonts with no banks on disk).
-- **Web UI**: rweb server, element-rendered HTML, go-styl (Stylus) styling, SSE-driven meters (~12 Hz), tiny vanilla-JS client.
+- **Web UI**: rweb server, element-rendered HTML, go-styl (Stylus) styling,
+  SSE-driven meters (~12 Hz), tiny vanilla-JS client. The surface is styled
+  after the Soundcraft Ui24R: near-black chassis, colour-coded processing
+  sections (EQ red, dynamics green, effects blue, input orange), recessed
+  slots with silver caps, lamp-style on/off keys, cyan LED value windows, and
+  segmented green/amber/red meters on a grey bezel. Every strip runs the full
+  height of the console so the fader decks line up on one row, and readouts
+  are unit-aware (`L45`, `1.2k`, `4.0:1`, `-6.5`).
 
 ## Build & run
 
@@ -193,8 +200,15 @@ plugins/src/  example external plugins (flanger, bass_xpander, cross_fader)
 
 ```bash
 go test ./...        # DSP sanity (EQ gain, compressor, gate, reverb), polysynth,
-                     # scene round-trip, tutorial and tour catalog invariants
+                     # scene round-trip, tutorial and tour catalog invariants,
+                     # console readout formats (server/client must agree)
 ```
 
 Smoke-test programs (engine tone, plugin load, recording) are archived in
 `arch_test_scripts/`; run any with `go run ./arch_test_scripts/<name>`.
+`styl_check` compiles `web/styles/main.styl` and reports errors (or prints the
+CSS with `-print`) without booting the audio engine:
+
+```bash
+go run ./arch_test_scripts/styl_check
+```

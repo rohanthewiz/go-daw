@@ -33,6 +33,55 @@
     return Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1);
   }
 
+  // Console readouts are unit-aware: a pan sits at "L45", a filter at "1.2k",
+  // a trim at "-6.0". The format is chosen from the parameter's last dotted
+  // segment ("eq2.freq" -> "freq"). This mirrors readoutText/paramKind in
+  // web/ui/controls.go exactly — the server prints the initial value and this
+  // reprints it after a drag, so the two must agree or the number will jump on
+  // first touch. Change one, change the other.
+  function fmtParam(v, param) {
+    var name = String(param || "");
+    var dot = name.lastIndexOf(".");
+    if (dot >= 0) name = name.slice(dot + 1);
+
+    switch (name) {
+      case "pan":
+        var n = Math.round(Math.abs(v) * 100);
+        if (n < 1) return "C";
+        return (v < 0 ? "L" : "R") + n;
+      case "freq":
+        return v >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0);
+      case "gain":
+      case "makeup":
+        return (v >= 0 ? "+" : "") + v.toFixed(1);
+      case "ratio":
+        return v.toFixed(1) + ":1";
+      case "q":
+        return v.toFixed(2);
+      case "attack":
+      case "release":
+      case "hold":
+      case "predelay":
+        return v >= 100 ? v.toFixed(0) : v.toFixed(1);
+      case "mix":
+      case "decay":
+      case "damp":
+        return (v * 100).toFixed(0) + "%";
+    }
+    return fmt(v);
+  }
+
+  // Paint the travelled portion of a slot. Native range inputs expose no hook
+  // for "behind the cap", so the track gradient stops at --f: a unitless 0..1
+  // the stylesheet multiplies by a calc() length (see main.styl). The server
+  // renders the same property inline, so this only has to keep it current.
+  function setFill(el) {
+    var min = parseFloat(el.min), max = parseFloat(el.max);
+    if (!isFinite(min) || !isFinite(max) || max === min) return;
+    var f = (parseFloat(el.value) - min) / (max - min);
+    el.style.setProperty("--f", Math.max(0, Math.min(1, f)).toFixed(4));
+  }
+
   // Debounce per control key: sliders emit dozens of input events per second;
   // 30ms trailing-edge coalescing keeps the param feel instant while capping
   // request rate.
@@ -43,10 +92,11 @@
   }
 
   function updateReadout(el, value) {
+    setFill(el);
     var wrap = el.closest(".ctl") || el.closest(".fader-wrap");
     if (!wrap) return;
     var ro = wrap.querySelector(".readout");
-    if (ro) ro.textContent = fmt(value);
+    if (ro) ro.textContent = fmtParam(value, el.dataset.param);
   }
 
   // ---- parameter dispatch --------------------------------------------------

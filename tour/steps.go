@@ -40,6 +40,71 @@ type Step struct {
 	// noise on a playback-only run, and one about SoundFonts is worse than
 	// noise when the banks folder is empty — it points at a disabled control.
 	Needs string `json:"needs,omitempty"`
+	// Do is an optional action the reader can take on this step that the tour
+	// can actually verify. Absent on the steps that only explain something.
+	Do *Do `json:"do,omitempty"`
+}
+
+// Do turns "try this" into something the tour notices. A step carrying one
+// renders an unchecked task line in the balloon; the client watches the live
+// page and ticks it the moment the reader does it — by any route, since what
+// is watched is the state the mixer already renders rather than the particular
+// widget that produced it.
+//
+// Detection is deliberately advisory: ticking a task never moves the tour on.
+// The overlay does not block the page, so the reader may well still be playing
+// with the control that satisfied the ask, and yanking the balloon away
+// mid-sweep would punish exactly the curiosity the tour is trying to invite.
+// The reader still presses Next — but now knows the console heard them.
+type Do struct {
+	// Ask is the imperative shown beside the checkbox. One action, phrased so
+	// that finishing it is unambiguous.
+	Ask string `json:"ask"`
+	// Kind selects the detector (see the Do* constants).
+	Kind string `json:"kind"`
+	// Sel is what to watch, defaulting to the step's Target. It is separate
+	// because the spotlight and the evidence are often different elements: the
+	// scene step spotlights the whole scene box but is satisfied by a new
+	// option appearing in the recall list.
+	Sel string `json:"sel,omitempty"`
+}
+
+// Detector kinds. Each maps to a few lines of client code over the live DOM;
+// the split between them is about *when* the evidence exists, which is what
+// decides whether an ask can survive the page reloads structural edits cause:
+//
+//	click/edit  live events — the evidence is the interaction itself
+//	state       a selector that matches only once the thing has happened
+//	count/value a comparison against a baseline snapshotted when the step
+//	            opened, so the answer outlives the reload that produced it
+const (
+	DoClick = "click" // a click landed inside Sel
+	DoEdit  = "edit"  // an input or change event came from inside Sel
+	DoState = "state" // something now matches Sel (the selector carries the state)
+	DoCount = "count" // more elements match Sel than when the step opened
+	DoValue = "value" // Sel's element holds a different value than when the step opened
+)
+
+// DoKinds reports whether a detector kind is one the client implements.
+// Exported for the catalog test: an authoring typo here would render a task
+// the reader can never tick, which is worse than no task at all.
+func DoKinds(kind string) bool {
+	switch kind {
+	case DoClick, DoEdit, DoState, DoCount, DoValue:
+		return true
+	}
+	return false
+}
+
+// Watch returns the selector the client should watch for this action.
+func (s Step) Watch() string {
+	if s.Do == nil {
+		return ""
+	}
+	if s.Do.Sel != "" {
+		return s.Do.Sel
+	}
+	return s.Target
 }
 
 // Capability values accepted in Step.Needs. Kept as constants (rather than
@@ -158,6 +223,9 @@ var builtin = []Step{
 			"one-bar count-in at the metronome tempo, so you have a moment to get ready. " +
 			"Press it again during the count to abort before anything is captured.",
 		Tip: "Shift-click REC to skip the count-in and start instantly — handy for catching something already playing.",
+		// Ends where it started: the second press aborts the count-in, so the
+		// ask is provably complete without leaving a stray WAV behind.
+		Do: &Do{Ask: "Press REC, then press it again to abort the count-in.", Kind: DoClick},
 	},
 	{
 		Section: "Transport",
@@ -169,6 +237,9 @@ var builtin = []Step{
 			"path only — clicks are never printed into a recording. The button flashes on " +
 			"every beat, brighter on the downbeat.",
 		Tip: "Don't know the tempo? Tap the CLICK button in time three or more times and it sets the BPM from your hand.",
+		// The lit button is the evidence, so tapping a tempo in counts exactly
+		// as much as clicking it once.
+		Do: &Do{Ask: "Start the click.", Kind: DoState, Sel: `#metro-btn[data-on="1"]`},
 	},
 	{
 		Section: "Transport",
@@ -179,6 +250,7 @@ var builtin = []Step{
 			"Both are re-read on every beat, so edits take effect within a beat — no stop " +
 			"and restart. Both persist to the database, so your tempo is still here after " +
 			"a restart, and both feed the record and lesson count-ins.",
+		Do: &Do{Ask: "Set a tempo of your own.", Kind: DoEdit},
 	},
 	{
 		Section: "Transport",
@@ -190,6 +262,9 @@ var builtin = []Step{
 			"fader. Type a name and press Save. Recall applies a saved scene live, " +
 			"through the same atomic cells the faders use, so the audio never stops.",
 		Tip: "Save a scene called \"start\" before you experiment. Recall is then always one click away.",
+		// Watches the recall list rather than the Save button: saving reloads
+		// the page, and a new option in the list is evidence that survives it.
+		Do: &Do{Ask: "Save a scene.", Kind: DoCount, Sel: `#scene-list option[value]:not([value=""])`},
 	},
 	{
 		Section: "Transport",
@@ -222,6 +297,9 @@ var builtin = []Step{
 			"song player, your live input, or a WAV file. Changing this rebuilds the " +
 			"source and reloads the page — the server stays the single source of truth.",
 		Tip: "Go ahead and switch it. The tour remembers where you were and picks up on the reloaded page.",
+		// The value is snapshotted when the step opens, so the comparison still
+		// answers after the rebuild reloads the page.
+		Do: &Do{Ask: "Switch the source.", Kind: DoValue},
 	},
 	{
 		Section: "Channel strip",
@@ -233,6 +311,7 @@ var builtin = []Step{
 			"would squeeze the whole bass register into the first few pixels — and Lvl " +
 			"trims it. This is the fastest way to prove your speakers and metering work.",
 		Tip: "Raise Lvl and watch the channel meter and the master meter move together.",
+		Do:  &Do{Ask: "Move Freq or Lvl.", Kind: DoEdit},
 	},
 	{
 		Section: "Channel strip",
@@ -299,6 +378,7 @@ var builtin = []Step{
 			"sets how wide the affected region is — low Q for a broad tone shift, high Q " +
 			"to notch out one ringing frequency.",
 		Tip: "Cutting usually sounds better than boosting. Try a small cut where a sound feels crowded.",
+		Do:  &Do{Ask: "Cut the Mid band a little.", Kind: DoEdit},
 	},
 	{
 		Section: "Channel strip",
@@ -309,6 +389,9 @@ var builtin = []Step{
 			"4:1 means four decibels in produce one decibel out. Knee softens the corner, " +
 			"attack and release set how fast it reacts, and Makeup restores the level you " +
 			"lost. Push the ratio to 20 or beyond and it works as a hard limiter.",
+		// One selector covers the whole section, so switching it On (a change
+		// on the checkbox) and pulling Thresh (input on a slider) both count.
+		Do: &Do{Ask: "Switch the compressor on and pull Thresh down.", Kind: DoEdit},
 	},
 	{
 		Section: "Channel strip",
@@ -331,6 +414,9 @@ var builtin = []Step{
 			"slider you see was generated from the module's own parameter metadata — " +
 			"there is no per-plugin UI code anywhere.",
 		Tip: "Writing your own is one Go file exporting NewModule(). The README walks through a complete example.",
+		// Adding a module reloads the page; counting the inserted rows against
+		// the step's opening snapshot is what makes the ask survive that.
+		Do: &Do{Ask: "Add a module to the chain.", Kind: DoCount, Sel: `.strip[data-strip="1"] .mod`},
 	},
 	{
 		Section: "Channel strip",
@@ -341,6 +427,7 @@ var builtin = []Step{
 			"sound keeps the same perceived loudness as it crosses the stereo field " +
 			"instead of dipping in the middle. Like the fader, it ramps across each block " +
 			"rather than jumping, which is what keeps moves free of zipper noise.",
+		Do: &Do{Ask: "Pan the channel across and back.", Kind: DoEdit},
 	},
 	{
 		Section: "Channel strip",
@@ -351,6 +438,8 @@ var builtin = []Step{
 		Body: "Send the channel straight to Master, or to one of the group buses. " +
 			"Groups let you ride a whole submix — all the drums, all the backing vocals — " +
 			"on one fader, and mute the lot with one button.",
+		Do: &Do{Ask: "Send this channel to a group.", Kind: DoValue,
+			Sel: `.strip[data-strip="1"] select[data-role="group-select"]`},
 	},
 	{
 		Section: "Channel strip",
@@ -360,6 +449,7 @@ var builtin = []Step{
 		Body: "Silences this channel at its output. The source keeps running and the " +
 			"meter keeps moving, so unmuting drops you back into a song already in " +
 			"progress rather than starting it over.",
+		Do: &Do{Ask: "Mute the channel, then unmute it.", Kind: DoClick},
 	},
 	{
 		Section: "Channel strip",
@@ -370,6 +460,7 @@ var builtin = []Step{
 			"the meter shows RMS as the filled bar and peak as the floating white tick, " +
 			"scaled so the bottom is −60 dBFS and the top is 0. Peaks touching the top " +
 			"are the ones to watch.",
+		Do: &Do{Ask: "Ride the fader and watch the meter follow.", Kind: DoEdit},
 	},
 
 	// ---- buses ----
@@ -427,6 +518,10 @@ var builtin = []Step{
 			"keyboard: A S D F for white keys, W E T Y U for the sharps, Z and X to shift " +
 			"octave, space bar for the sustain pedal.",
 		Tip: "The letters printed on each key are its computer-keyboard shortcut.",
+		// A lit key is how every input route announces itself — mouse, computer
+		// keyboard, and hardware MIDI all light the same key — so one selector
+		// verifies "you played a note" however it was played.
+		Do: &Do{Ask: "Play a note.", Kind: DoState, Sel: `.piano-key[data-on="1"]`},
 	},
 	{
 		Section: "Piano",
@@ -460,6 +555,7 @@ var builtin = []Step{
 			"amber on the keyboard, a wrong key flashes red and is counted, and chord " +
 			"steps only advance once every ringed key is held at the same time.",
 		Tip: "Both begin with a four-beat count-in at the metronome tempo. Uncheck Count-in to start on the spot.",
+		Do:  &Do{Ask: "Press Listen and hear a lesson.", Kind: DoClick},
 	},
 	{
 		Section: "Lessons",

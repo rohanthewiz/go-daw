@@ -31,6 +31,67 @@ func TestCatalogInvariants(t *testing.T) {
 	}
 }
 
+// TestActionInvariants checks what the client assumes about a verifiable ask:
+// it has copy to render, a detector the client implements, and something to
+// watch. The last one is the trap — Do.Sel defaults to the step's Target, so an
+// ask on a targetless step with no Sel of its own would watch nothing and could
+// never be ticked.
+func TestActionInvariants(t *testing.T) {
+	for _, s := range Steps() {
+		if s.Do == nil {
+			continue
+		}
+		if s.Do.Ask == "" {
+			t.Errorf("step %q: action with no ask", s.Title)
+		}
+		if !DoKinds(s.Do.Kind) {
+			t.Errorf("step %q: unknown action kind %q", s.Title, s.Do.Kind)
+		}
+		if s.Watch() == "" {
+			t.Errorf("step %q: action has nothing to watch (no Do.Sel, no Target)", s.Title)
+		}
+	}
+}
+
+// TestActionsSurviveReload pins the reason count/value exist as separate kinds
+// from click/edit. The three actions below reload the page as they complete
+// (rebuilding a source, adding a module, saving a scene), which destroys any
+// listener watching for the interaction — so those steps must be authored with
+// a baseline-comparing kind, whose evidence is still on the page afterwards.
+func TestActionsSurviveReload(t *testing.T) {
+	reloads := map[string]bool{
+		"Src: where the sound comes from": true,
+		"Modules: the plugin chain":       true,
+		"Scenes: the console's memory":    true,
+	}
+	for _, s := range Steps() {
+		if !reloads[s.Title] {
+			continue
+		}
+		if s.Do == nil {
+			t.Errorf("step %q: expected a verifiable action", s.Title)
+			continue
+		}
+		if s.Do.Kind != DoCount && s.Do.Kind != DoValue {
+			t.Errorf("step %q: action kind %q cannot survive the reload this step causes; want %q or %q",
+				s.Title, s.Do.Kind, DoCount, DoValue)
+		}
+	}
+}
+
+// TestTitlesAreUnique guards the key the client stores completed asks under.
+// Two steps sharing a title would share a checkbox — ticking one would tick the
+// other, and the baseline one step snapshotted would be read by the other.
+func TestTitlesAreUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, s := range Steps() {
+		if seen[s.Title] {
+			t.Errorf("duplicate step title %q; titles key per-step client state", s.Title)
+		}
+		seen[s.Title] = true
+	}
+}
+
 // TestSectionsAreContiguous pins the grouping the balloon header relies on:
 // section names label runs of steps, so a name that reappears after another
 // section would show the reader "Transport" twice with a gap between.

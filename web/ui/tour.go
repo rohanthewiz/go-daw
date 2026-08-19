@@ -18,6 +18,7 @@ import "github.com/rohanthewiz/element"
 //	│ EQ: three parametric bands               │
 //	│ Low, Mid, and High are full parametric…  │
 //	│ ▸ Cutting usually sounds better than…    │
+//	│ ☐ Cut the Mid band a little.             │
 //	│ ●●●●●○○○○○○      [Back]  [Next →]        │
 //	└──────────────────────────────────────────┘
 type TourOverlay struct {
@@ -46,6 +47,11 @@ func (t TourOverlay) Render(b *element.Builder) (x any) {
 			b.DivClass("tour-title", "id", "tour-title").R(),
 			b.DivClass("tour-body", "id", "tour-body").R(),
 			b.DivClass("tour-tip", "id", "tour-tip").R(),
+			// The verifiable ask, when the step has one: a task line whose
+			// checkbox is the ::before glyph, so app.js can write the text
+			// without disturbing the marker. data-did flips it to ✓ when the
+			// client sees the reader actually do it.
+			b.DivClass("tour-ask", "id", "tour-ask").R(),
 			b.DivClass("tour-foot").R(
 				// One dot per step, painted by app.js. It doubles as a jump
 				// control — on a thirty-step tour, "back to the piano" should

@@ -1079,6 +1079,10 @@
   //     (swap a source, add a module) that reloads the page mid-tour. The step
   //     index rides sessionStorage, so the tour reopens where it left off
   //     instead of punishing curiosity.
+  //   - Steps carrying an action (step.do) are verified rather than merely
+  //     suggested: the client watches the live page and ticks the task line
+  //     the moment the reader does it. Ticking never advances the tour — see
+  //     tourWatch below for why that restraint is deliberate.
 
   var tourRoot = document.getElementById("tour");
   if (tourRoot) {
@@ -1089,11 +1093,29 @@
     var tourTitleEl = document.getElementById("tour-title");
     var tourBodyEl = document.getElementById("tour-body");
     var tourTipEl = document.getElementById("tour-tip");
+    var tourAskEl = document.getElementById("tour-ask");
     var tourDotsEl = document.getElementById("tour-dots");
 
     var tourSteps = [];    // catalog, fetched once at page load
     var tourIdx = -1;      // current step; -1 = tour not running
     var tourOpened = [];   // <details> this tour opened, closed again on leaving
+    var tourWatchOff = null; // teardown for the current step's detector
+    // Both maps are keyed by step title and ride sessionStorage, because the
+    // reader completing an ask is frequently the very thing that reloads the
+    // page: tourDone remembers which asks are ticked, tourBase what the console
+    // looked like when a count/value step opened. Losing either across the
+    // reload would silently un-tick the ask that just succeeded.
+    var tourDone = tourLoad("tour-done");
+    var tourBase = tourLoad("tour-base");
+
+    function tourLoad(key) {
+      try { return JSON.parse(sessionStorage.getItem(key) || "{}") || {}; }
+      catch (_) { return {}; }
+    }
+
+    function tourSave(key, obj) {
+      try { sessionStorage.setItem(key, JSON.stringify(obj)); } catch (_) {}
+    }
 
     var RING_PAD = 6;      // breathing room between the target and the ring
     var BALLOON_GAP = 14;  // between the ring and the balloon
@@ -1201,6 +1223,118 @@
     window.addEventListener("scroll", tourReposition, true);
     window.addEventListener("resize", tourReposition);
 
+    // -- verified actions ----------------------------------------------------
+    // A step carrying an action (step.do) names what to watch — do.sel, or the
+    // step's own target — and which kind of evidence counts. The kinds differ
+    // in *when* that evidence exists, which is what lets three of these asks
+    // survive the reload that completing them causes:
+    //
+    //   click / edit    live events, delegated at the document in the capture
+    //                   phase so a control re-rendered by a reload is still
+    //                   covered without rebinding
+    //   state           a selector that matches only once it has happened
+    //                   (#metro-btn[data-on="1"], .piano-key[data-on="1"]) —
+    //                   which means every input route counts equally: a lit
+    //                   piano key looks the same whether it came from the
+    //                   mouse, the computer keyboard, or hardware MIDI
+    //   count / value   compared against a baseline taken when the step opened
+    //                   and kept in sessionStorage; the evidence is the page
+    //                   that comes back, not the interaction that left
+    //
+    // Ticking is deliberately the end of it — no auto-advance. The overlay
+    // doesn't block the page, so a reader who just moved the fader is very
+    // likely still moving it, and pulling the balloon away mid-sweep would
+    // punish exactly the curiosity this design invites. Next lights up instead.
+
+    function tourBaseline(key, read) {
+      if (!(key in tourBase)) {
+        tourBase[key] = read();
+        tourSave("tour-base", tourBase);
+      }
+      return tourBase[key];
+    }
+
+    function tourTick(key) {
+      if (tourDone[key]) return;
+      tourDone[key] = 1;
+      tourSave("tour-done", tourDone);
+      paintAsk();
+      paintDots();
+    }
+
+    // Narrow an observer to the attributes its selector actually mentions.
+    // Without this, every meter repaint — a style attribute, twelve times a
+    // second — would wake the predicate; with it, an observer watching
+    // [data-on] sleeps through the entire meter stream.
+    function tourAttrs(sel) {
+      var found = sel.match(/\[([a-zA-Z][\w-]*)/g);
+      return found ? found.map(function (a) { return a.slice(1); }) : [];
+    }
+
+    // Install the current step's detector and return its teardown. Detectors
+    // are idempotent — tourTick ignores repeats — so a chatty source (an input
+    // event per pointer move) costs nothing after the first.
+    function tourWatch(step) {
+      var act = step.do;
+      if (!act) return null;
+      var key = step.title;
+      var sel = act.sel || step.target;
+      if (!sel || tourDone[key]) return null; // nothing to watch, or already ticked
+      var tick = function () { tourTick(key); };
+
+      if (act.kind === "click" || act.kind === "edit") {
+        var types = act.kind === "click" ? ["click"] : ["input", "change"];
+        var h = function (e) {
+          if (e.target && e.target.closest && e.target.closest(sel)) tick();
+        };
+        types.forEach(function (t) { document.addEventListener(t, h, true); });
+        return function () {
+          types.forEach(function (t) { document.removeEventListener(t, h, true); });
+        };
+      }
+
+      // The DOM-reading kinds share one shape: a predicate checked immediately
+      // — which is what catches an ask completed on the far side of a reload —
+      // and again on every relevant mutation.
+      var pred, onChange = null;
+      if (act.kind === "state") {
+        pred = function () { return !!document.querySelector(sel); };
+      } else if (act.kind === "count") {
+        var was = tourBaseline(key, function () { return document.querySelectorAll(sel).length; });
+        pred = function () { return document.querySelectorAll(sel).length > was; };
+      } else if (act.kind === "value") {
+        var read = function () {
+          var el = document.querySelector(sel);
+          return el ? String(el.value) : "";
+        };
+        var before = tourBaseline(key, read);
+        pred = function () { return read() !== before; };
+        // A <select> changing value mutates nothing, so this kind needs the
+        // event as well as the observer to catch it before any reload.
+        onChange = function () { if (pred()) tick(); };
+      } else {
+        return null; // unknown kind: leave the task unticked rather than guess
+      }
+
+      if (pred()) tick();
+      var attrs = tourAttrs(sel);
+      var opts = { subtree: true, childList: true, attributes: attrs.length > 0 };
+      if (attrs.length) opts.attributeFilter = attrs;
+      var obs = new MutationObserver(function () { if (pred()) tick(); });
+      obs.observe(document.body, opts);
+      if (onChange) document.addEventListener("change", onChange, true);
+
+      return function () {
+        obs.disconnect();
+        if (onChange) document.removeEventListener("change", onChange, true);
+      };
+    }
+
+    function tourUnwatch() {
+      if (tourWatchOff) tourWatchOff();
+      tourWatchOff = null;
+    }
+
     // -- painting ------------------------------------------------------------
 
     function paintDots() {
@@ -1209,11 +1343,25 @@
         var dot = document.createElement("button");
         dot.className = "tour-dot";
         dot.title = s.title;
+        // done = you have been here; did = you completed this step's ask.
         if (i < tourIdx) dot.dataset.done = "1";
+        if (tourDone[s.title]) dot.dataset.did = "1";
         if (i === tourIdx) dot.dataset.cur = "1";
         dot.addEventListener("click", function () { tourGo(i, i > tourIdx ? 1 : -1); });
         tourDotsEl.appendChild(dot);
       });
+    }
+
+    // The task line, its checkbox, and the only reward for ticking it: Next
+    // lights up. Called on every step and again whenever an ask completes.
+    function paintAsk() {
+      var step = tourSteps[tourIdx];
+      var act = step && step.do;
+      tourAskEl.textContent = act ? act.ask : "";
+      tourAskEl.dataset.on = act ? "1" : "0";
+      var did = !!(act && tourDone[step.title]);
+      tourAskEl.dataset.did = did ? "1" : "0";
+      document.getElementById("tour-next").dataset.ready = did ? "1" : "0";
     }
 
     function paintStep(step, el) {
@@ -1223,6 +1371,7 @@
       tourBodyEl.textContent = step.body;
       tourTipEl.textContent = step.tip || "";
       tourTipEl.dataset.on = step.tip ? "1" : "0";
+      paintAsk(); // before measuring: a task line changes the balloon's height
       document.getElementById("tour-back").disabled = tourIdx === 0;
       document.getElementById("tour-next").textContent =
         tourIdx === tourSteps.length - 1 ? "Done" : "Next";
@@ -1241,6 +1390,7 @@
     function tourGo(i, dir) {
       dir = dir || 1;
       restoreSections();
+      tourUnwatch();
 
       while (i >= 0 && i < tourSteps.length) {
         var step = tourSteps[i];
@@ -1274,6 +1424,7 @@
     function tourShow(step, el) {
       paintStep(step, el);
       try { sessionStorage.setItem("tour-step", String(tourIdx)); } catch (_) {}
+      tourWatchOff = tourWatch(step);
     }
 
     function tourStart(i) {
@@ -1287,9 +1438,19 @@
     // reopening on every page reload.
     function tourEnd(done) {
       restoreSections();
+      tourUnwatch();
       tourIdx = -1;
       tourRoot.dataset.open = "0";
-      try { sessionStorage.removeItem("tour-step"); } catch (_) {}
+      // Ticked asks and their baselines belong to this run of the tour, so
+      // they leave with it: reopening starts from empty checkboxes rather
+      // than from a page that happens to still be muted from last time.
+      tourDone = {};
+      tourBase = {};
+      try {
+        sessionStorage.removeItem("tour-step");
+        sessionStorage.removeItem("tour-done");
+        sessionStorage.removeItem("tour-base");
+      } catch (_) {}
       if (done && !tourRoot.dataset.seen) {
         tourRoot.dataset.seen = "1";
         post("/api/setting", { key: "tour.seen", value: "1" });

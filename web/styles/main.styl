@@ -1032,6 +1032,36 @@ input.fader::-moz-range-thumb
   &[data-on="1"]
     display block
 
+// The verifiable ask reads as a task, not as more prose: a checkbox glyph in
+// the gutter that fills in when the client sees the reader do it. The marker
+// is a pseudo-element so app.js can write the copy with textContent and never
+// disturb it.
+.tour-ask
+  display none
+  position relative
+  margin-top 7px
+  padding 5px 8px 5px 22px
+  border-left 2px solid edge
+  border-radius 0 3px 3px 0
+  background #1c1e23
+  color ink
+  font-family -apple-system, "Helvetica Neue", sans-serif
+  font-size 11px
+  line-height 1.45
+  &[data-on="1"]
+    display block
+  &::before
+    content "☐"
+    position absolute
+    left 6px
+    color inkDim
+  &[data-did="1"]
+    border-left-color green
+    color #cfe3cf
+    &::before
+      content "✓"
+      color green
+
 .tour-foot
   display flex
   flex-wrap wrap
@@ -1045,6 +1075,11 @@ input.fader::-moz-range-thumb
     &:disabled
       color #4d5261
       cursor default
+    // Finishing an ask lights the way onward. It is an invitation, not an
+    // instruction — the tour still waits for the press.
+    &[data-ready="1"]
+      border-color green
+      color inkBright
 
 // Dots take the whole first row (a thirty-step tour would otherwise crowd the
 // buttons off the balloon) and double as jump targets.
@@ -1070,6 +1105,12 @@ input.fader::-moz-range-thumb
   &[data-done="1"]
     background inkDim
     border-color inkDim
+  // A step whose ask was completed reads green wherever it sits in the strip,
+  // so the dots double as a record of what you actually did. Ordered before
+  // data-cur so the current step still shows gold.
+  &[data-did="1"]
+    background green
+    border-color green
   &[data-cur="1"]
     background gold
     border-color gold

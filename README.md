@@ -32,6 +32,14 @@ A web-controlled digital audio workstation / mixing console in Go for macOS.
   and picks up exactly where you were, and steps whose target is missing or
   hidden are skipped. The server drops steps this instance can't demonstrate
   (live input on a playback-only run, SoundFonts with no banks on disk).
+  Fifteen of the steps carry a **verifiable ask** — "Start the click", "Add a
+  module to the chain", "Play a note" — shown as a checkbox that ticks itself
+  the moment you actually do it. Detection watches the state the mixer already
+  renders rather than a particular widget, so a note played on the computer
+  keyboard or a hardware MIDI keyboard counts exactly as much as a clicked one;
+  the three asks whose action reloads the page (source, module, scene) compare
+  against a snapshot taken when the step opened, so they survive it. Ticking an
+  ask never advances the tour — it lights up **Next** and leaves the pace to you.
 - **Web UI**: rweb server, element-rendered HTML, go-styl (Stylus) styling,
   SSE-driven meters (~12 Hz), tiny vanilla-JS client. The surface is styled
   after the Soundcraft Ui24R: near-black chassis, colour-coded processing

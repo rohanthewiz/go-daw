@@ -22,6 +22,14 @@ var stylSource string
 //go:embed assets/app.js
 var appJS string
 
+// The guided tour ships as its own asset rather than being folded into
+// app.js: it touches no mixer internals (it reads the DOM the mixer already
+// paints), so keeping it separate means it loads, reads, and could be dropped
+// as one unit.
+//
+//go:embed assets/tour.js
+var tourJS string
+
 // Server bundles the dependencies every handler needs.
 type Server struct {
 	cfg    *config.Config
@@ -59,6 +67,7 @@ func Start(cfg *config.Config, engine *audio.Engine, st *store.Store) error {
 	s.Get("/", srv.pageHandler)
 	s.Get("/styles.css", func(ctx rweb.Context) error { return rweb.CSS(ctx, srv.css) })
 	s.Get("/assets/app.js", func(ctx rweb.Context) error { return rweb.JS(ctx, appJS) })
+	s.Get("/assets/tour.js", func(ctx rweb.Context) error { return rweb.JS(ctx, tourJS) })
 	s.Get("/events", srv.hub.Handler(s))
 
 	// Control API

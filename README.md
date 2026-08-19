@@ -23,6 +23,7 @@ A web-controlled digital audio workstation / mixing console in Go for macOS.
 - **Digital memory**: named scenes snapshot the entire console to bytdb (pure-Go embedded DB); recall live without stopping audio. Plus master-bus recording to `recordings/*.wav`.
 - **Virtual piano**: 25-key on-screen keyboard driving a polyphonic synth on any channel — playable by mouse/touch (strike position = velocity), computer keyboard (tracker layout, Z/X octave), or a hardware MIDI keyboard via Web MIDI (device picker, hot-plug, stuck-note panic on unplug).
 - **Piano tutorial**: built-in guided lessons served from `/api/lessons` — scales, first melodies (Mary Had a Little Lamb, Twinkle Twinkle, Ode to Joy), and chord progressions. Target keys get amber guide rings, wrong notes flash red and are counted, chord steps require the full set held at once, and **Listen** plays the lesson through the synth. Any input route (mouse, keys, MIDI) can answer.
+- **Guided tour**: an interactive walkthrough of the whole console — welcome, source, fader/meter, EQ, dynamics, plugin inserts, bus routing, metronome, recording, scenes, piano, lessons. It spotlights the real UI, waits for you to actually do each step (and detects it however you did it), and survives the page reloads that structural changes trigger. Opens itself on a first run; afterwards it's the **? Tour** button or the <kbd>?</kbd> key.
 - **Web UI**: rweb server, element-rendered HTML, go-styl (Stylus) styling, SSE-driven meters (~12 Hz), tiny vanilla-JS client.
 
 ## Build & run
@@ -49,6 +50,26 @@ terminal app. If it's denied, capture is silent — re-enable it under
 falls back to playback-only (the UI shows a `playback-only` badge).
 
 Monitor live input on headphones — speakers will feed back into the mic.
+
+## The guided tour
+
+The first time a console is opened, an interactive tour walks the whole signal
+path — source → strip → bus → master → record — one step at a time. It
+spotlights the actual control being discussed and waits for you to use it;
+steps tick themselves off however you got there (mouse, computer keyboard, or
+MIDI), and every one of them is skippable.
+
+Reopen it any time with **? Tour** in the transport bar or the <kbd>?</kbd> key;
+<kbd>Esc</kbd> closes it. Whether it has ever been opened is persisted
+(`tour.seen`), so it only ever launches itself once.
+
+`web/assets/tour.js` is self-contained: it injects its own styles, holds its own
+copy, and detects completion purely from the DOM the mixer already paints
+(`data-on` flags, module strips, lit piano keys) — no hooks into `app.js`.
+Because actions like adding a plugin or saving a scene reload the page by
+design, the tour persists its position and its per-step "before" snapshots in
+`sessionStorage` and re-detects completion from post-reload state. Sections in
+a channel strip carry `data-sect` names purely as stable targets for it.
 
 ## Writing an audio module plugin
 
@@ -176,6 +197,7 @@ record/       SPSC ring, WAV writer, recorder lifecycle
 store/        bytdb scene persistence
 tutorial/     built-in piano lesson catalog (pure data, served as JSON)
 web/          rweb server, handlers, SSE meters, element UI, styl styles
+              assets/app.js  mixer client · assets/tour.js  guided tour
 plugins/src/  example external plugins (flanger, bass_xpander, cross_fader)
 ```
 

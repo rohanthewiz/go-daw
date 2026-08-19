@@ -60,6 +60,22 @@ body
   color #ff8d99
   font-variant-numeric tabular-nums
 
+// Guided-tour launcher. Styled like the metronome button (same chassis) but
+// in accent blue, so it reads as help rather than as another transport
+// control; data-on lights it while the tour is open.
+.tour-btn
+  background panel2
+  color accent
+  border 1px solid line
+  border-radius 4px
+  padding 4px 10px
+  cursor pointer
+  &:hover
+    border-color accent
+  &[data-on="1"]
+    background #1d3552
+    border-color accent
+
 .scene-box
   display flex
   gap 6px

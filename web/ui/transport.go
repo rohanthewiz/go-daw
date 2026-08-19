@@ -13,6 +13,7 @@ type TransportBar struct {
 	Duplex     bool
 	MetroBPM   string // persisted tempo rendered into the BPM input
 	MetroBeats string // persisted beats-per-bar; selects the matching meter option
+	TourSeen   bool   // false on a fresh console — tour.js then auto-opens the tour
 }
 
 // Render satisfies element.Component.
@@ -63,6 +64,21 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 				}),
 			),
 		),
+
+		// Guided tour launcher. The button is the tour's only server-rendered
+		// surface: it carries the persisted "has this console ever seen the
+		// tour?" flag, which tour.js reads to decide whether to open itself
+		// unprompted on a first visit (and flips by POSTing tour.seen).
+		b.Wrap(func() {
+			attrs := []string{"id", "tour-btn", "data-on", "0",
+				"title", "Guided tour of the console (?)"}
+			if t.TourSeen {
+				attrs = append(attrs, "data-seen", "1")
+			} else {
+				attrs = append(attrs, "data-seen", "0")
+			}
+			b.ButtonClass("tour-btn", attrs...).T("? Tour")
+		}),
 
 		b.DivClass("scene-box").R(
 			b.Input("type", "text", "id", "scene-name", "placeholder", "scene name").R(),

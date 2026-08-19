@@ -66,6 +66,9 @@ func (srv *Server) pageHandler(ctx rweb.Context) error {
 		// Default on: the count-in is the pedagogically safer choice, so a
 		// fresh profile gets it and only an explicit uncheck persists "0".
 		TutCountIn: srv.setting("tut.countin", "1") != "0",
+		// Default false: an untouched console is a first run, so the guided
+		// tour opens itself once. Only the tour's own POST flips this.
+		TourSeen: srv.setting("tour.seen", "0") == "1",
 	})
 	return ctx.WriteHTML(html)
 }
@@ -634,6 +637,17 @@ var settingValidators = map[string]func(value string) error{
 			return nil
 		}
 		return serr.New("beats-per-bar not offered by the meter selector", "beats", value)
+	},
+	"tour.seen": func(value string) error {
+		// Write-once from the client's point of view: the guided tour posts
+		// "1" the first time it opens and never posts anything else. Validated
+		// as a flag anyway so a stray value can't make the page render a
+		// nonsense data-seen attribute.
+		switch value {
+		case "0", "1":
+			return nil
+		}
+		return serr.New("tour seen flag must be 0 or 1", "value", value)
 	},
 	"tut.countin": func(value string) error {
 		// Booleans persist as "0"/"1" strings — the settings table is TEXT by

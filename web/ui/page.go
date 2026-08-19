@@ -18,6 +18,7 @@ type PageData struct {
 	MetroBPM   string   // persisted metronome tempo, already validated/defaulted
 	MetroBeats string   // persisted beats-per-bar, already validated/defaulted
 	TutCountIn bool     // persisted tutorial count-in preference (default on)
+	TourSeen   bool     // has the guided tour ever been opened on this console?
 }
 
 // MixerPage renders the complete console HTML document. The page is fully
@@ -42,6 +43,7 @@ func MixerPage(d PageData) string {
 				Duplex:     d.Duplex,
 				MetroBPM:   d.MetroBPM,
 				MetroBeats: d.MetroBeats,
+				TourSeen:   d.TourSeen,
 			}),
 
 			b.DivClass("console").R(
@@ -73,6 +75,9 @@ func MixerPage(d PageData) string {
 			element.RenderComponents(b, TutorialPanel{CountIn: d.TutCountIn}),
 
 			b.Script("src", "/assets/app.js").R(),
+			// The guided tour loads after app.js and stays independent of it:
+			// it drives nothing itself, it only watches the DOM app.js paints.
+			b.Script("src", "/assets/tour.js").R(),
 		),
 	)
 	return b.String()

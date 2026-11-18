@@ -7,15 +7,98 @@
 
   // ---- helpers -------------------------------------------------------------
 
-  function post(url, body) {
+  // ---- status toasts --------------------------------------------------------
+  // Every failed request used to end at console.error, so a WAV that would
+  // not load, a module that would not add, or a REC refused by the server
+  // simply did nothing on screen. toast() is the one place the page talks
+  // back. The container is created lazily (no server markup needed) and is
+  // an aria-live region so screen readers announce messages too.
+  var toastBox = null;
+  var lastToast = "", lastToastAt = 0;
+
+  function toast(msg, kind) {
+    // Collapse repeats: a slider dragged against a failing endpoint fires
+    // dozens of identical errors a second, and one message says it all.
+    var now = Date.now();
+    if (msg === lastToast && now - lastToastAt < 2000) return;
+    lastToast = msg;
+    lastToastAt = now;
+
+    if (!toastBox) {
+      toastBox = document.createElement("div");
+      toastBox.id = "toasts";
+      toastBox.setAttribute("role", "status");
+      toastBox.setAttribute("aria-live", "polite");
+      document.body.appendChild(toastBox);
+    }
+    var t = document.createElement("div");
+    t.className = "toast";
+    t.dataset.kind = kind || "info";
+    t.textContent = msg;
+    toastBox.appendChild(t);
+    while (toastBox.children.length > 4) toastBox.removeChild(toastBox.firstChild);
+    // Errors linger longer: they usually need reading, not just noticing.
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); },
+      kind === "error" || kind === "warn" ? 9000 : 4500);
+  }
+
+  // Structural changes reload the page, which would wipe a toast raised
+  // just before it (e.g. "scene recalled, but bank X is missing"). These
+  // helpers carry messages across the reload in sessionStorage and replay
+  // them once the new page is up.
+  function reloadWith(msgs) {
+    if (msgs && msgs.length) {
+      try { sessionStorage.setItem("pending-toasts", JSON.stringify(msgs)); } catch (_) {}
+    }
+    location.reload();
+  }
+  (function replayPendingToasts() {
+    var raw = null;
+    try {
+      raw = sessionStorage.getItem("pending-toasts");
+      sessionStorage.removeItem("pending-toasts");
+    } catch (_) {}
+    if (!raw) return;
+    try {
+      JSON.parse(raw).forEach(function (m) { toast(m.text, m.kind); });
+    } catch (_) {}
+  })();
+
+  // post sends a JSON body and resolves with the Response either way, so
+  // callers keep their `if (r.ok)` shape. What changed:
+  //  - a non-2xx reply is shown as a toast with the server's own message
+  //    (read from a clone, so callers can still read the body themselves);
+  //  - a network failure (server stopped) resolves to a stand-in {ok:false}
+  //    response instead of an unhandled rejection, and says so on screen.
+  // opts.quiet suppresses the toast for callers that report on their own.
+  function post(url, body, opts) {
+    var quiet = opts && opts.quiet;
     return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     }).then(function (r) {
-      if (!r.ok) r.text().then(function (t) { console.error("POST", url, r.status, t); });
+      if (!r.ok) {
+        r.clone().text().then(function (t) {
+          console.error("POST", url, r.status, t);
+          if (!quiet) toast((t || ("HTTP " + r.status)).slice(0, 300), "error");
+        });
+      }
       return r;
+    }, function (err) {
+      console.error("POST", url, err);
+      if (!quiet) toast("Can't reach the go-daw server. Is it still running?", "error");
+      return {
+        ok: false, status: 0,
+        json: function () { return Promise.resolve({}); },
+        text: function () { return Promise.resolve(""); },
+      };
     });
+  }
+
+  function baseName(p) {
+    var s = String(p || "");
+    return s.slice(Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\")) + 1);
   }
 
   // Log-scaled sliders run 0..1000 and carry data-min/data-max; this mirrors
@@ -142,6 +225,25 @@
   // the SSE meter paint from wiping the countdown text.
   var recCountTimers = [];
 
+  // reportTake tells the player where the bounce went, and says plainly when
+  // the take is damaged: blocks dropped because the disk fell behind (each
+  // one an audible gap) or a write error that ended the file early.
+  function reportTake(d) {
+    if (!d || !d.path) return;
+    var msg = "Saved " + baseName(d.path) + " (" + (d.seconds || 0).toFixed(1) + " s)";
+    var kind = "ok";
+    if (d.dropped) {
+      msg += ". " + d.dropped + " block" + (d.dropped === 1 ? "" : "s") +
+        " dropped (the disk could not keep up)";
+      kind = "warn";
+    }
+    if (d.error) {
+      msg += ". Recording stopped early: " + d.error;
+      kind = "error";
+    }
+    toast(msg, kind);
+  }
+
   function cancelRecCountIn() {
     recCountTimers.forEach(clearTimeout);
     recCountTimers = [];
@@ -170,11 +272,15 @@
         if (!e.shiftKey) return;
       }
       if (el.dataset.on === "1") {
-        post("/api/record/stop").then(function () { el.dataset.on = "0"; });
+        post("/api/record/stop").then(function (r) {
+          if (!r.ok) return;
+          el.dataset.on = "0";
+          return r.json().then(reportTake);
+        });
       } else if (e.shiftKey) {
         // Shift-click bypasses the count-in — instant record, e.g. to
         // capture something already playing.
-        post("/api/record/start").then(function () { el.dataset.on = "1"; });
+        post("/api/record/start").then(function (r) { if (r.ok) el.dataset.on = "1"; });
       } else {
         var recTimeEl = document.getElementById("rec-time");
         var beats = parseInt(document.getElementById("metro-beats").value, 10) || 4;
@@ -192,7 +298,7 @@
         }
         recCountTimers.push(setTimeout(function () {
           recCountTimers = [];
-          post("/api/record/start").then(function () { el.dataset.on = "1"; });
+          post("/api/record/start").then(function (r) { if (r.ok) el.dataset.on = "1"; });
         }, beats * iv));
       }
       return;
@@ -200,9 +306,14 @@
 
     if (el.id === "scene-save") {
       var name = document.getElementById("scene-name").value.trim();
-      if (!name) return alert("Enter a scene name first");
+      if (!name) return toast("Enter a scene name first", "warn");
+      // Saving over an existing name replaces that mix for good; ask first.
+      var exists = Array.prototype.some.call(
+        document.getElementById("scene-list").options,
+        function (o) { return o.value === name; });
+      if (exists && !confirm('Replace the saved scene "' + name + '" with the current mix?')) return;
       post("/api/scene/save", { name: name }).then(function (r) {
-        if (r.ok) location.reload();
+        if (r.ok) reloadWith([{ text: 'Scene "' + name + '" saved', kind: "ok" }]);
       });
       return;
     }
@@ -210,15 +321,24 @@
       var sel = document.getElementById("scene-list").value;
       if (!sel) return;
       post("/api/scene/recall", { name: sel }).then(function (r) {
-        if (r.ok) location.reload();
+        if (!r.ok) return;
+        // The server lists what it could not restore (a bank or WAV no
+        // longer on disk, a plugin not loaded); show it after the reload
+        // so a silent channel is explained instead of mysterious.
+        return r.json().then(function (d) {
+          var msgs = [{ text: 'Scene "' + sel + '" recalled', kind: "ok" }];
+          (d.warnings || []).forEach(function (w) { msgs.push({ text: w, kind: "warn" }); });
+          reloadWith(msgs);
+        });
       });
       return;
     }
     if (el.id === "scene-delete") {
       var del = document.getElementById("scene-list").value;
       if (!del) return;
+      if (!confirm('Delete the saved scene "' + del + '"? This cannot be undone.')) return;
       post("/api/scene/delete", { name: del }).then(function (r) {
-        if (r.ok) location.reload();
+        if (r.ok) reloadWith([{ text: 'Scene "' + del + '" deleted', kind: "ok" }]);
       });
       return;
     }
@@ -379,26 +499,74 @@
     // Every input route (mouse, computer keyboard, MIDI, tutorial demo)
     // funnels through these two calls, so the tutorial checker taps them here
     // rather than each producer separately.
+    // sounding maps each held MIDI note to the channel it was started on.
+    // A note-off must reach the synth that got the note-on: with the old
+    // "whatever the selector says now" routing, switching the piano channel
+    // while holding a chord sent the offs to the new channel and left the
+    // old one ringing.
+    var sounding = {};
+
+    // noteChains orders the posts for each channel+note pair. Every note
+    // is its own fetch, and the browser spreads them over parallel
+    // connections the server handles concurrently, so a quick tap (drum pad,
+    // staccato) could land its note-off *before* its note-on: the off is a
+    // no-op and the on then sustains forever. Chaining per pair keeps that
+    // order without serializing a chord's different notes behind each other.
+    var noteChains = {};
+    function postNote(ch, body) {
+      var key = ch + ":" + body.note;
+      var prev = noteChains[key] || Promise.resolve();
+      var next = prev.then(function () {
+        return post("/api/channel/" + ch + "/note", body);
+      });
+      noteChains[key] = next;
+      next.then(function () { if (noteChains[key] === next) delete noteChains[key]; });
+    }
+
     function noteOn(note, vel) {
+      var ch = pianoCh();
+      sounding[note] = ch;
       light(note, true);
-      post("/api/channel/" + pianoCh() + "/note", { note: note, on: true, velocity: vel });
+      postNote(ch, { note: note, on: true, velocity: vel });
       tutNoteOn(note);
     }
     function noteOff(note) {
+      var ch = sounding[note] !== undefined ? sounding[note] : pianoCh();
+      delete sounding[note];
       light(note, false);
-      post("/api/channel/" + pianoCh() + "/note", { note: note, on: false });
+      postNote(ch, { note: note, on: false });
       tutNoteOff(note);
     }
 
     // Sustain pedal (CC64). Client-side state gate: the space bar autorepeats
     // and MIDI pedals stream continuous values, but the server only needs the
-    // down/up transitions.
-    var pedalDown = false;
+    // down/up transitions. The release goes to the channel that got the
+    // press, for the same reason note-offs do.
+    var pedalDown = false, pedalCh = null;
     function pedalSet(down) {
       if (pedalDown === down) return;
       pedalDown = down;
-      post("/api/channel/" + pianoCh() + "/pedal", { down: down });
+      var ch = down ? pianoCh() : (pedalCh || pianoCh());
+      pedalCh = down ? ch : null;
+      post("/api/channel/" + ch + "/pedal", { down: down });
     }
+
+    // releaseAll lifts every key and the pedal. Called whenever the page can
+    // no longer see the matching key-up: the window loses focus (Cmd-Tab
+    // while holding "a" or Space: the keyup goes to another app), the tab is
+    // hidden or unloaded, or the piano switches channels. Without it those
+    // notes ring until the page reloads.
+    function releaseAll() {
+      Object.keys(sounding).forEach(function (n) { noteOff(parseInt(n, 10)); });
+      kbdHeld = {};
+      pointerNotes = {};
+      pedalSet(false);
+    }
+    window.addEventListener("blur", releaseAll);
+    window.addEventListener("pagehide", releaseAll);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) releaseAll();
+    });
 
     function setBase(nb) {
       base = Math.max(BASE_MIN, Math.min(BASE_MAX, nb));
@@ -462,9 +630,19 @@
     var kbdHeld = {}; // key char -> sounding MIDI note (pitch fixed at press
                       // time, so an octave shift mid-hold can't strand a note)
 
+    // isTypingTarget: does this keystroke belong to a field the user is
+    // typing into? Only text-entry controls qualify. It used to match every
+    // <input>, and a fader or slider keeps focus after it is dragged, so one
+    // touch of any slider silently disabled the computer-keyboard piano and
+    // the Space pedal until the user clicked somewhere else. Sliders,
+    // checkboxes and buttons take no letters, so the piano keeps them.
+    var TEXT_INPUT_TYPES = { text: 1, search: 1, email: 1, url: 1, tel: 1, password: 1, number: 1 };
     function isTypingTarget(e) {
       var t = e.target;
-      return t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA");
+      if (!t) return false;
+      if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+      if (t.tagName === "INPUT") return !!TEXT_INPUT_TYPES[(t.type || "text").toLowerCase()];
+      return false;
     }
 
     document.addEventListener("keydown", function (e) {
@@ -501,6 +679,9 @@
     // Picking a channel that isn't running a synth installs one (structural
     // change → reload, per the page's single-source-of-truth convention).
     if (pianoSel) pianoSel.addEventListener("change", function () {
+      // Lift everything first: held notes and the pedal belong to the
+      // previous channel (releaseAll routes each off to its own channel).
+      releaseAll();
       var opt = pianoSel.options[pianoSel.selectedIndex];
       if (opt && opt.dataset.synth === "1") return;
       post("/api/channel/" + pianoSel.value + "/source", { type: "synth" }).then(function (r) {
@@ -971,8 +1152,15 @@
     metroBeat++;
     // Tempo and meter are re-read every beat, so edits take effect within a
     // beat of typing them — no stop/start needed, no mid-bar stutter.
-    metroNext += metroIntervalMs();
-    metroTimer = setTimeout(metroTick, Math.max(0, metroNext - performance.now()));
+    var iv = metroIntervalMs();
+    metroNext += iv;
+    // Re-anchor if we have fallen more than a beat behind. Background tabs
+    // run timers about once a second, so metroNext lags; on return the
+    // zero-delay chain used to fire every missed beat back to back, a
+    // rattle of clicks. Dropping missed beats is what a metronome should do.
+    var now = performance.now();
+    if (now - metroNext > iv) metroNext = now;
+    metroTimer = setTimeout(metroTick, Math.max(0, metroNext - now));
   }
 
   function metroStart() {
@@ -1509,24 +1697,102 @@
     return Math.max(0, Math.min(1, (db + 60) / 60)) * 100;
   }
 
-  function paintMeter(key, peak, rms) {
-    var m = document.querySelector('.meter[data-meter="' + key + '"]');
-    if (!m) return;
-    m.querySelector(".meter-rms").style.height = levelPct(rms) + "%";
-    m.querySelector(".meter-peak").style.bottom = levelPct(peak) + "%";
+  // Meter elements, looked up once. paintMeter runs for every strip ~12.5
+  // times a second; it used to run three document-wide querySelector calls
+  // per meter per frame (about 40 per frame). The page reloads on every
+  // structural change, so a cache built on first use stays valid. Each
+  // entry also remembers the last painted values: writes are quantized to
+  // half a percent and skipped when unchanged, so an idle console stops
+  // invalidating style and layout altogether.
+  var meterEls = {};
+  function meterEl(key) {
+    if (!(key in meterEls)) {
+      var root = document.querySelector('.meter[data-meter="' + key + '"]');
+      meterEls[key] = root ? {
+        rms: root.querySelector(".meter-rms"),
+        peak: root.querySelector(".meter-peak"),
+        r: -1, p: -1,
+      } : null;
+    }
+    return meterEls[key];
   }
 
-  var es = new EventSource("/events");
+  function paintMeter(key, peak, rms) {
+    var m = meterEl(key);
+    if (!m || !m.rms || !m.peak) return;
+    var r = Math.round(levelPct(rms) * 2) / 2;
+    var p = Math.round(levelPct(peak) * 2) / 2;
+    if (r !== m.r) { m.rms.style.height = r + "%"; m.r = r; }
+    if (p !== m.p) { m.peak.style.bottom = p + "%"; m.p = p; }
+  }
+
+  // Strip fault badges: the engine silences and resets a strip whose audio
+  // goes non-finite or whose insert panics. Mark it so a channel that went
+  // quiet points at its cause; the badge clears on reload.
+  var faultSeen = {};
+  function markFault(id, count) {
+    if (!count || faultSeen[id] === count) return;
+    var first = faultSeen[id] === undefined;
+    faultSeen[id] = count;
+    var strip = document.querySelector('.strip[data-strip="' + id + '"]');
+    if (strip) {
+      strip.dataset.fault = "1";
+      var head = strip.querySelector(".strip-head");
+      if (head) head.title = "Audio fault: this channel produced invalid audio (NaN/Inf) " +
+        "or one of its modules crashed. It was silenced and reset; a crashed module is " +
+        "bypassed until removed. Check the source and the module chain.";
+    }
+    if (first) toast("Channel " + id + " had an audio fault and was silenced. " +
+      "Check its source and modules.", "error");
+  }
+
   var connDot = document.getElementById("conn-dot");
+  var es = null;
+  var recErrorShown = "";
 
-  es.onopen = function () { if (connDot) connDot.dataset.live = "1"; };
-  es.onerror = function () { if (connDot) connDot.dataset.live = "0"; };
+  // The meter stream is opened only while the tab is visible. Each open
+  // EventSource holds one of the browser's six HTTP/1.1 connections to the
+  // server; six tabs used to exhaust them, and every POST (faders, notes,
+  // REC) then queued forever with no error. A hidden tab has nothing to
+  // paint anyway. Reconnecting resyncs everything, since each frame carries
+  // the full state (levels, recording, transport).
+  function connectMeters() {
+    if (es) return;
+    es = new EventSource("/events");
+    es.onopen = function () { if (connDot) connDot.dataset.live = "1"; };
+    es.onerror = function () { if (connDot) connDot.dataset.live = "0"; };
+    es.onmessage = onMeters;
+  }
+  function disconnectMeters() {
+    if (!es) return;
+    es.close();
+    es = null;
+    if (connDot) connDot.dataset.live = "0";
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) disconnectMeters();
+    else connectMeters();
+  });
 
-  es.onmessage = function (e) {
+  function onMeters(e) {
     var msg;
     try { msg = JSON.parse(e.data); } catch (_) { return; }
     if (msg.type !== "meters" || !msg.data) return;
     var d = msg.data;
+
+    (d.faults || []).forEach(function (n, i) { markFault(i + 1, n); });
+    if (d.masterFaults && faultSeen.master !== d.masterFaults) {
+      if (faultSeen.master === undefined) {
+        toast("The master bus overflowed and was silenced for a moment. Check for very hot channels.", "error");
+      }
+      faultSeen.master = d.masterFaults;
+    }
+    // A failed write ends the take on disk while REC still reads as
+    // running. Say so once, while the player can still react.
+    if (d.recError && d.recError !== recErrorShown) {
+      recErrorShown = d.recError;
+      toast("Recording problem: " + d.recError + ". Press REC to stop and keep what was saved.", "error");
+    }
 
     (d.ch || []).forEach(function (m, i) { paintMeter("ch-" + (i + 1), Math.max(m.pl, m.pr), Math.max(m.rl, m.rr)); });
     (d.grp || []).forEach(function (m, i) { paintMeter("grp-" + (i + 1), Math.max(m.pl, m.pr), Math.max(m.rl, m.rr)); });
@@ -1553,7 +1819,9 @@
       if (play) play.dataset.state = mi.state === "playing" ? "playing" : "";
       if (pause) pause.dataset.state = mi.state === "paused" ? "paused" : "";
     });
-  };
+  }
+
+  if (!document.hidden) connectMeters();
 
   // clock formats seconds as m:ss, mirroring the server's initial render.
   function clock(sec) {

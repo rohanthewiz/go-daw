@@ -87,6 +87,13 @@ func (c *Compressor) refreshCoefs(attackMs, releaseMs float64) {
 	c.lastA, c.lastR = attackMs, releaseMs
 }
 
+// Reset empties the envelope follower (audio thread only). A NaN envelope
+// otherwise persists forever: every update mixes the old value back in.
+func (c *Compressor) Reset() {
+	c.env = 0
+	c.GainReductionDB.Set(0)
+}
+
 // ProcessBlock compresses both channels in place. Audio thread only.
 func (c *Compressor) ProcessBlock(l, r []float32) {
 	if !c.Enabled.Load() {
@@ -112,6 +119,24 @@ func (c *Compressor) ProcessBlock(l, r []float32) {
 
 	maxGR := 0.0 // most negative gain reduction this block, for the UI meter
 
+	// Below-knee fast path. The gain computer returns exactly 0 dB of
+	// reduction whenever the envelope is under the knee's lower edge
+	// (threshold - knee/2; with knee = 0 that edge is the threshold itself).
+	// Comparing in the linear domain against a per-block constant lets those
+	// samples skip both transcendentals (Log10 in LinToDB, Pow for the gain)
+	// — the common case by far, and the master limiter is always engaged, so
+	// this runs on every block of every session. Only samples at or above
+	// the edge take the exact log-domain path below, so output is unchanged.
+	//
+	//	env (linear) ──< kneeStartLin? ──yes──► g = makeupLin   (no math)
+	//	                       │
+	//	                       no ──► LinToDB ─► knee/slope ─► Pow ─► g
+	//
+	// The +1e-9 mirrors LinToDB's own epsilon so the two paths agree on
+	// which side of the edge a sample is.
+	kneeStartLin := DBToLin(threshold - knee/2)
+	makeupLin := float32(DBToLin(makeup))
+
 	for i := range l {
 		// Stereo-linked peak detection keeps the image stable: both sides
 		// always get the identical gain.
@@ -127,6 +152,12 @@ func (c *Compressor) ProcessBlock(l, r []float32) {
 			c.env = df + c.aCoef*(c.env-df)
 		} else {
 			c.env = df + c.rCoef*(c.env-df)
+		}
+
+		if c.env+1e-9 < kneeStartLin {
+			l[i] *= makeupLin
+			r[i] *= makeupLin
+			continue
 		}
 
 		// Gain computation in the log domain, where compression curves are

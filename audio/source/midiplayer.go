@@ -72,6 +72,17 @@ type MidiPlayer struct {
 	// is private), so a mid-song toggle takes effect on the next play.
 	loop atomic.Bool
 
+	// playLoop is the loop flag the sequencer actually latched at the last
+	// Play — what the running song really does. It can differ from loop
+	// (the user's current preference) until the next play. Auto-stop and
+	// the position fold must follow playLoop: reading the live preference
+	// instead made a mid-song "loop off" stop the song instantly once a
+	// loop pass had run past the length, and a mid-song "loop on" leave the
+	// transport showing "playing" over silence forever. Written by the
+	// audio thread at Play; atomic because PosSeconds reads it from the
+	// control plane.
+	playLoop atomic.Bool
+
 	// state/posFrames are UI mirrors written exclusively by the audio thread
 	// (single-writer, so plain Load/Store need no CAS). posFrames counts
 	// frames rendered since the last play-from-top.
@@ -167,7 +178,7 @@ func (p *MidiPlayer) LengthSeconds() float64 { return p.lengthSec }
 // private), so the position is folded back into the song length here.
 func (p *MidiPlayer) PosSeconds() float64 {
 	pos := p.posFrames.Load()
-	if p.loop.Load() && p.lengthFrames > 0 {
+	if p.playLoop.Load() && p.lengthFrames > 0 {
 		pos %= p.lengthFrames
 	} else if pos > p.lengthFrames {
 		pos = p.lengthFrames // clamp the tail so the readout parks at the end
@@ -208,7 +219,9 @@ func (p *MidiPlayer) drainEvents() {
 			} else {
 				// Play latches the loop flag and resets the synthesizer —
 				// both alloc-free, verified against meltysynth's source.
-				p.seq.Play(p.file, p.loop.Load())
+				loop := p.loop.Load()
+				p.playLoop.Store(loop)
+				p.seq.Play(p.file, loop)
 				p.posFrames.Store(0)
 				p.state.Store(midiStatePlaying)
 			}
@@ -239,7 +252,7 @@ func (p *MidiPlayer) Read(l, r []float32) int {
 		pos := p.posFrames.Add(uint64(len(l)))
 		// Auto-stop once the song plus a tail window has rendered (non-loop):
 		// without this the transport would show "playing" forever over silence.
-		if !p.loop.Load() && pos > p.lengthFrames+p.tailFrames {
+		if !p.playLoop.Load() && pos > p.lengthFrames+p.tailFrames {
 			p.seq.Stop()
 			p.posFrames.Store(0)
 			p.state.Store(midiStateStopped)

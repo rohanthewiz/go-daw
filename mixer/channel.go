@@ -41,20 +41,31 @@ type Channel struct {
 	Reverb *dsp.Reverb
 
 	// modules is the insert chain, swapped copy-on-write: handlers build a
-	// brand-new slice and Store it; the audio thread only ever sees a fully
-	// formed chain. The abandoned slice is garbage-collected once the
-	// callback moves on — no locks, no torn state.
-	modules atomic.Pointer[[]module.AudioModule]
+	// brand-new chain and Store it; the audio thread only ever sees a fully
+	// formed chain. The abandoned chain is garbage-collected once the
+	// callback moves on — no locks, no torn state. Structural edits CAS the
+	// pointer (see editModules) so two concurrent requests can't lose one
+	// another's change.
+	modules atomic.Pointer[insertChain]
 
 	src atomic.Pointer[source.Source]
 
 	Meter Meter
+
+	// faults counts blocks in which the strip produced NaN/±Inf audio and
+	// had to be silenced and reset (see recoverFault). Written by the audio
+	// thread, read by the meter loop; monotonic, so a reader that sees it
+	// grow knows a new fault happened since its last look.
+	faults atomic.Uint64
 
 	// Audio-thread-only state.
 	l, r     []float32 // per-channel scratch
 	lastGain float64   // previous block's gain multiplier, for ramping
 	lastGL   float64   // previous block's pan gains
 	lastGR   float64
+	// muteGain is the output multiplier the mute ramp ended the last block
+	// on: 1 = audible, 0 = fully muted. See ProcessBlock.
+	muteGain float64
 }
 
 // NewChannel builds a strip with unity gain, center pan, all processors at
@@ -77,12 +88,28 @@ func NewChannel(id int, sampleRate float64, maxBlock int) *Channel {
 		l:        make([]float32, maxBlock),
 		r:        make([]float32, maxBlock),
 		lastGain: 1, lastGL: 0.7071, lastGR: 0.7071,
+		muteGain: 1,
 	}
 	name := "Ch " + itoa(id)
 	c.name.Store(&name)
-	empty := []module.AudioModule{}
-	c.modules.Store(&empty)
+	c.modules.Store(&insertChain{})
 	return c
+}
+
+// insertChain is one immutable generation of a strip's module inserts plus
+// that generation's crash record.
+//
+// failed is a bitmask indexed by position in mods: bit i set means module i
+// panicked inside Process and is bypassed from then on. It lives on the
+// chain, not the channel, so it resets for free whenever the chain is
+// replaced — removing or re-adding the culprit gives it a clean slate, and a
+// bit can never land on the wrong module after an edit shifts indexes.
+// Positions past 63 are not tracked; a panic there is still contained for
+// the block, just retried next block. (A strip with 64 inserts is not a
+// realistic console.)
+type insertChain struct {
+	mods   []module.AudioModule
+	failed atomic.Uint64
 }
 
 // Name returns the display name.
@@ -103,33 +130,65 @@ func (c *Channel) Source() source.Source {
 func (c *Channel) SetSource(s source.Source) { c.src.Store(&s) }
 
 // Modules returns the current insert chain (read-only snapshot).
-func (c *Channel) Modules() []module.AudioModule { return *c.modules.Load() }
+func (c *Channel) Modules() []module.AudioModule { return c.modules.Load().mods }
+
+// editModules applies a copy-on-write edit with a compare-and-swap retry.
+// A plain load-modify-store would let two overlapping requests (two tabs, a
+// double click) each copy the same old chain, and the second Store would
+// silently discard the first one's module. With CAS the loser re-reads the
+// winner's chain and re-applies its edit on top. edit must not mutate old.
+// Control plane only; the audio thread never writes this pointer.
+func (c *Channel) editModules(edit func(old []module.AudioModule) ([]module.AudioModule, error)) error {
+	for {
+		cur := c.modules.Load()
+		next, err := edit(cur.mods)
+		if err != nil {
+			return err
+		}
+		if c.modules.CompareAndSwap(cur, &insertChain{mods: next}) {
+			return nil
+		}
+	}
+}
 
 // AddModule appends a module copy-on-write (control plane).
 func (c *Channel) AddModule(m module.AudioModule) {
-	old := *c.modules.Load()
-	next := make([]module.AudioModule, len(old), len(old)+1)
-	copy(next, old)
-	next = append(next, m)
-	c.modules.Store(&next)
+	_ = c.editModules(func(old []module.AudioModule) ([]module.AudioModule, error) {
+		next := make([]module.AudioModule, len(old), len(old)+1)
+		copy(next, old)
+		return append(next, m), nil
+	})
 }
 
 // SetModules replaces the whole insert chain (control plane, e.g. scene recall).
 func (c *Channel) SetModules(chain []module.AudioModule) {
-	c.modules.Store(&chain)
+	c.modules.Store(&insertChain{mods: chain})
 }
 
 // RemoveModule drops the module at idx copy-on-write (control plane).
 func (c *Channel) RemoveModule(idx int) error {
-	old := *c.modules.Load()
-	if idx < 0 || idx >= len(old) {
-		return serr.New("module index out of range")
+	return c.editModules(func(old []module.AudioModule) ([]module.AudioModule, error) {
+		if idx < 0 || idx >= len(old) {
+			return nil, serr.New("module index out of range")
+		}
+		next := make([]module.AudioModule, 0, len(old)-1)
+		next = append(next, old[:idx]...)
+		return append(next, old[idx+1:]...), nil
+	})
+}
+
+// FailedModules reports which inserts have been bypassed after panicking,
+// as chain indexes. Control plane (UI badge, logs).
+func (c *Channel) FailedModules() []int {
+	ch := c.modules.Load()
+	mask := ch.failed.Load()
+	var out []int
+	for i := range min(len(ch.mods), 64) {
+		if mask&(1<<i) != 0 {
+			out = append(out, i)
+		}
 	}
-	next := make([]module.AudioModule, 0, len(old)-1)
-	next = append(next, old[:idx]...)
-	next = append(next, old[idx+1:]...)
-	c.modules.Store(&next)
-	return nil
+	return out
 }
 
 // ProcessBlock renders n frames and returns the channel's stereo output.
@@ -147,8 +206,20 @@ func (c *Channel) ProcessBlock(n int) (l, r []float32) {
 		l[i], r[i] = 0, 0
 	}
 
-	if c.Mute.Load() {
-		// Muted channels still clear their meter but skip all DSP work.
+	// Mute is ramped, not cut. A hard cut mid-waveform is a step
+	// discontinuity — an audible click on every mute press, the same zipper
+	// problem the gain and pan ramps below exist to avoid. So the block in
+	// which mute engages still runs the full strip and fades its output
+	// 1→0 (tail of ProcessBlock); only once the ramp has reached 0 does the
+	// strip take this fast path. Unmuting runs the strip again and fades
+	// 0→1. The source was already read above, so files and songs keep
+	// their place while muted.
+	//
+	//	mute pressed   block k: DSP + ramp 1→0   block k+1…: fast path (silent)
+	//	unmute         block m: DSP + ramp 0→1   block m+1…: normal
+	muted := c.Mute.Load()
+	if muted && c.muteGain == 0 {
+		// Fully muted: clear the meter but skip all DSP work.
 		for i := range l {
 			l[i], r[i] = 0, 0
 		}
@@ -177,8 +248,23 @@ func (c *Channel) ProcessBlock(n int) (l, r []float32) {
 	}
 	c.Comp.ProcessBlock(l, r)
 
-	for _, m := range *c.modules.Load() {
-		m.Process(l, r)
+	chain := c.modules.Load()
+	for i, m := range chain.mods {
+		if i < 64 && chain.failed.Load()&(1<<i) != 0 {
+			continue // bypassed after an earlier panic
+		}
+		if !processInsert(m, l, r) {
+			// The module died mid-block, so l/r may be half-processed.
+			// Silence this block; the fault scan below would not catch
+			// finite garbage. Bypass it for the rest of this chain's life.
+			for j := range l {
+				l[j], r[j] = 0, 0
+			}
+			if i < 64 {
+				chain.failed.Or(1 << i)
+			}
+			c.faults.Add(1)
+		}
 	}
 
 	c.Reverb.ProcessBlock(l, r)
@@ -196,15 +282,103 @@ func (c *Channel) ProcessBlock(n int) (l, r []float32) {
 	}
 	c.lastGL, c.lastGR = tGL, tGR
 
+	// Mute ramp (see the fast path near the top). Steady unmuted state is
+	// muteGain == 1 with target 1, which skips the loop entirely.
+	muteTarget := 1.0
+	if muted {
+		muteTarget = 0
+	}
+	if muteTarget != c.muteGain {
+		mStep := (muteTarget - c.muteGain) / float64(n)
+		mg := c.muteGain
+		for i := range l {
+			mg += mStep
+			l[i] *= float32(mg)
+			r[i] *= float32(mg)
+		}
+		c.muteGain = muteTarget
+	}
+
+	// Fault containment: a non-finite sample would latch into every
+	// recursive processor downstream and, via the master limiter, silence
+	// the whole console (see dsp.NonFinite). One scan per block is cheap
+	// next to the strip's filters.
+	if dsp.NonFinite(l, r) {
+		c.recoverFault(l, r)
+	}
+
 	c.Meter.StoreBlock(l, r)
 	return l, r
 }
+
+// processInsert runs one module and reports whether it returned normally.
+//
+// Inserts include third-party .so plugins, and a Go panic on the audio
+// callback is not a glitch: it unwinds into cgo and takes down the whole
+// process, with any in-progress recording unfinalized. Containing it here
+// costs one open-coded defer per module per block (a few ns) and turns a
+// crash into a bypassed insert plus a UI badge.
+//
+// The recover path is the only part that may allocate (the runtime boxes
+// the panic value); it runs at most once per module per chain generation,
+// since the caller bypasses the module afterwards.
+func processInsert(m module.AudioModule, l, r []float32) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	m.Process(l, r)
+	return true
+}
+
+// recoverFault silences this block and resets every stateful processor on
+// the strip so the next block starts from clean state. Audio thread only;
+// every Reset is allocation-free.
+//
+// Module inserts cannot be reset (AudioModule has no such method), so a
+// plugin that keeps emitting NaN will fault on every block — the strip stays
+// silent and the counter keeps climbing, which is exactly the signal the UI
+// needs to point at it. The rest of the mix is unaffected either way.
+func (c *Channel) recoverFault(l, r []float32) {
+	for i := range l {
+		l[i], r[i] = 0, 0
+	}
+	c.Gate.Reset()
+	c.HPF.Reset()
+	c.LPF.Reset()
+	for _, eq := range c.EQ {
+		eq.Reset()
+	}
+	c.Comp.Reset()
+	c.Reverb.Reset()
+	// Ramp memories can only be non-finite if a cell held NaN for a block;
+	// restart them from silence so the next ramp is well-defined.
+	if !dsp.Finite(c.lastGain) {
+		c.lastGain = 0
+	}
+	if !dsp.Finite(c.lastGL) || !dsp.Finite(c.lastGR) {
+		c.lastGL, c.lastGR = 0, 0
+	}
+	c.faults.Add(1)
+}
+
+// Faults returns how many blocks this strip has had to silence because its
+// output went non-finite. Safe from any goroutine.
+func (c *Channel) Faults() uint64 { return c.faults.Load() }
 
 // ApplyParam routes a dotted parameter name ("eq1.freq", "comp.ratio",
 // "gate.enabled", ...) to the right cell. Keeping the entire address space in
 // one switch gives a single place to see every automatable parameter.
 // Control plane only.
 func (c *Channel) ApplyParam(name string, value float64) error {
+	// clampF cannot catch NaN (every comparison with NaN is false), so a
+	// non-finite value is rejected outright rather than stored. JSON cannot
+	// encode NaN, but callers other than the HTTP API (tests, future
+	// automation) can.
+	if !dsp.Finite(value) {
+		return serr.New("parameter value must be a finite number", "param", name)
+	}
 	onOff := value >= 0.5 // toggles arrive as 0/1
 
 	switch name {

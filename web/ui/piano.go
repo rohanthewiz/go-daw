@@ -65,7 +65,7 @@ func (pp PianoPanel) Render(b *element.Builder) (x any) {
 				b.Wrap(func() {
 					for _, ch := range pp.Console.Channels {
 						_, playable := ch.Source().(source.NotePlayer)
-						label := strconv.Itoa(ch.ID) + " · " + ch.Name()
+						label := strconv.Itoa(ch.ID) + " · " + esc(ch.Name())
 						attrs := []string{"value", strconv.Itoa(ch.ID)}
 						if playable {
 							attrs = append(attrs, "data-synth", "1")

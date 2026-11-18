@@ -56,6 +56,17 @@ func NewGate(sampleRate float64) *Gate {
 	return g
 }
 
+// Reset returns the gate to its power-on state (closed, envelope empty).
+// Audio thread only. Closed rather than open: after a fault the safe
+// assumption is silence, and the detector reopens within a millisecond if
+// real signal is present.
+func (g *Gate) Reset() {
+	g.state = gateClosed
+	g.gain = 0
+	g.holdN = 0
+	g.env = 0
+}
+
 // ProcessBlock gates both channels in place using a stereo-linked detector.
 // Audio thread only.
 func (g *Gate) ProcessBlock(l, r []float32) {

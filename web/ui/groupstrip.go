@@ -20,7 +20,7 @@ func (gs GroupStrip) Render(b *element.Builder) (x any) {
 	b.DivClass("strip strip-group", "data-kind", "grp").R(
 		b.DivClass("strip-head").R(
 			b.DivClass("strip-no").T("GRP"),
-			b.DivClass("strip-name").T(g.Name()),
+			b.DivClass("strip-name").T(esc(g.Name())),
 		),
 		b.Wrap(func() {
 			attrs := []string{"data-target", "grp", "data-id", id, "data-param", "mute"}

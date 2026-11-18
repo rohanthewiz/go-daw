@@ -1,7 +1,9 @@
 package mixer
 
 import (
+	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/rohanthewiz/go-daw/audio/source"
 	"github.com/rohanthewiz/go-daw/module"
@@ -24,6 +26,12 @@ type Console struct {
 	// LiveFeed is the engine's capture buffer; needed here so ApplyScene can
 	// reconstruct "live" sources.
 	LiveFeed *source.LiveFeed
+
+	// recallMu serializes scene recalls (control plane only; the audio
+	// thread never touches it). Each recall is many independent writes, so
+	// two overlapping recalls (a double-clicked Recall, two tabs) would
+	// interleave into a console that matches neither scene.
+	recallMu sync.Mutex
 }
 
 // NewConsole builds the full surface.
@@ -259,11 +267,26 @@ func captureSource(s source.Source) SourceState {
 // an unknown module) are logged and skipped so one stale reference can't
 // abort the rest of the recall.
 func (c *Console) ApplyScene(s SceneState) error {
-	if s.Version != 1 {
-		return serr.New("unsupported scene version")
-	}
+	_, err := c.ApplySceneReport(s)
+	return err
+}
 
-	c.Master.GainDB.Set(s.Master.GainDB)
+// ApplySceneReport is ApplyScene plus a list of human-readable warnings for
+// the parts it could not restore (a bank or WAV no longer on disk, a plugin
+// no longer loaded). A partial recall still succeeds — that is the point of
+// skipping bad items — but the caller can now tell the user which channel
+// came back silent instead of returning a bare "ok".
+func (c *Console) ApplySceneReport(s SceneState) (warnings []string, err error) {
+	if s.Version != 1 {
+		return nil, serr.New("unsupported scene version")
+	}
+	c.recallMu.Lock()
+	defer c.recallMu.Unlock()
+
+	// Bus gains are clamped to the same -60..+12 dB travel the
+	// group/master HTTP handlers enforce: a scene is stored data, and stored
+	// data outlives the code that validated it.
+	c.Master.GainDB.Set(clampF(s.Master.GainDB, -60, 12))
 
 	if len(s.Groups) != len(c.Groups) || len(s.Channels) != len(c.Channels) {
 		logger.Info("Scene geometry differs from console; applying overlap",
@@ -276,7 +299,7 @@ func (c *Console) ApplyScene(s SceneState) error {
 		}
 		g := c.Groups[i]
 		g.SetName(gs.Name)
-		g.GainDB.Set(gs.GainDB)
+		g.GainDB.Set(clampF(gs.GainDB, -60, 12))
 		g.Mute.Store(gs.Mute)
 	}
 
@@ -286,59 +309,120 @@ func (c *Console) ApplyScene(s SceneState) error {
 		}
 		ch := c.Channels[i]
 		ch.SetName(cs.Name)
-		ch.GainDB.Set(cs.GainDB)
-		ch.Pan.Set(cs.Pan)
-		ch.Mute.Store(cs.Mute)
 		if cs.Group >= 0 && cs.Group <= len(c.Groups) {
 			ch.GroupIdx.Store(int32(cs.Group))
 		}
 
-		ch.Gate.Enabled.Store(cs.Gate.Enabled)
-		ch.Gate.OpenThreshDB.Set(cs.Gate.ThresholdDB)
-		ch.Gate.HysteresisDB.Set(cs.Gate.HysteresisDB)
-		ch.Gate.AttackMs.Set(cs.Gate.AttackMs)
-		ch.Gate.HoldMs.Set(cs.Gate.HoldMs)
-		ch.Gate.ReleaseMs.Set(cs.Gate.ReleaseMs)
+		applyStrip(ch, cs)
 
-		ch.HPF.Enabled.Store(cs.HPF.Enabled)
-		ch.HPF.Freq.Set(cs.HPF.Freq)
-		ch.HPF.Update()
-		ch.LPF.Enabled.Store(cs.LPF.Enabled)
-		ch.LPF.Freq.Set(cs.LPF.Freq)
-		ch.LPF.Update()
-
-		for bi, eqs := range cs.EQ {
-			eq := ch.EQ[bi]
-			eq.Enabled.Store(eqs.Enabled)
-			eq.Freq.Set(eqs.Freq)
-			eq.GainDB.Set(eqs.GainDB)
-			eq.Q.Set(eqs.Q)
-			eq.Update()
+		if w := c.applySource(ch, cs.Source); w != "" {
+			warnings = append(warnings, w)
 		}
-
-		ch.Comp.Enabled.Store(cs.Comp.Enabled)
-		ch.Comp.ThresholdDB.Set(cs.Comp.ThresholdDB)
-		ch.Comp.Ratio.Set(cs.Comp.Ratio)
-		ch.Comp.KneeDB.Set(cs.Comp.KneeDB)
-		ch.Comp.AttackMs.Set(cs.Comp.AttackMs)
-		ch.Comp.ReleaseMs.Set(cs.Comp.ReleaseMs)
-		ch.Comp.MakeupDB.Set(cs.Comp.MakeupDB)
-
-		ch.Reverb.Enabled.Store(cs.Reverb.Enabled)
-		ch.Reverb.PreDelayMs.Set(cs.Reverb.PreDelayMs)
-		ch.Reverb.Decay.Set(cs.Reverb.Decay)
-		ch.Reverb.Damp.Set(cs.Reverb.Damp)
-		ch.Reverb.Mix.Set(cs.Reverb.Mix)
-
-		c.applySource(ch, cs.Source)
-		c.applyModules(ch, cs.Modules)
+		warnings = append(warnings, c.applyModules(ch, cs.Modules)...)
 	}
-	return nil
+	return warnings, nil
 }
+
+// applyStrip restores every strip parameter through Channel.ApplyParam —
+// the same entry point (and so the same clamps) as a live slider move.
+//
+// Recall used to Set the cells directly, which skipped validation entirely.
+// That matters because some out-of-range values are not merely odd but
+// destructive: comp.ratio 0 makes the gain computer's slope 1/0, Q near 0
+// blows up a biquad, and the resulting NaN latches into the strip. Scenes are
+// stored data (and hand-editable JSON), so they get the same treatment as
+// any other input. ApplyParam also recomputes biquad coefficients, which the
+// old code did by hand.
+//
+// Each name below is a case in ApplyParam's switch; a typo would surface as
+// a logged "unknown channel parameter" rather than a silent skip.
+func applyStrip(ch *Channel, cs ChannelState) {
+	b := func(on bool) float64 {
+		if on {
+			return 1
+		}
+		return 0
+	}
+	type kv struct {
+		name  string
+		value float64
+	}
+	params := []kv{
+		{"gain", cs.GainDB},
+		{"pan", cs.Pan},
+		{"mute", b(cs.Mute)},
+
+		{"gate.enabled", b(cs.Gate.Enabled)},
+		{"gate.threshold", cs.Gate.ThresholdDB},
+		{"gate.hysteresis", cs.Gate.HysteresisDB},
+		{"gate.attack", cs.Gate.AttackMs},
+		{"gate.hold", cs.Gate.HoldMs},
+		{"gate.release", cs.Gate.ReleaseMs},
+
+		{"hpf.enabled", b(cs.HPF.Enabled)},
+		{"hpf.freq", cs.HPF.Freq},
+		{"lpf.enabled", b(cs.LPF.Enabled)},
+		{"lpf.freq", cs.LPF.Freq},
+
+		{"comp.enabled", b(cs.Comp.Enabled)},
+		{"comp.threshold", cs.Comp.ThresholdDB},
+		{"comp.ratio", cs.Comp.Ratio},
+		{"comp.knee", cs.Comp.KneeDB},
+		{"comp.attack", cs.Comp.AttackMs},
+		{"comp.release", cs.Comp.ReleaseMs},
+		{"comp.makeup", cs.Comp.MakeupDB},
+
+		{"reverb.enabled", b(cs.Reverb.Enabled)},
+		{"reverb.predelay", cs.Reverb.PreDelayMs},
+		{"reverb.decay", cs.Reverb.Decay},
+		{"reverb.damp", cs.Reverb.Damp},
+		{"reverb.mix", cs.Reverb.Mix},
+	}
+	for bi, eqs := range cs.EQ {
+		pfx := "eq" + itoa(bi+1) + "."
+		params = append(params,
+			kv{pfx + "enabled", b(eqs.Enabled)},
+			kv{pfx + "freq", eqs.Freq},
+			kv{pfx + "gain", eqs.GainDB},
+			kv{pfx + "q", eqs.Q},
+		)
+	}
+	for _, p := range params {
+		if err := ch.ApplyParam(p.name, p.value); err != nil {
+			logger.LogErr(err, "msg", "scene: strip parameter skipped", "channel", itoa(ch.ID))
+		}
+	}
+}
+
+// Source parameter ranges, matching the strip's sliders (web/ui
+// channelstrip.go). Enforced on the server because a level is applied as
+// DBToLin(level): +1000 dB is 1e50, which overflows float32 to Inf and
+// faults the strip. Shared by the live source-param API and SetChannelSource
+// (scene recall, source swaps) so both paths agree.
+const (
+	SourceLevelMinDB = -60.0
+	SourceLevelMaxDB = 0.0
+	OscFreqMinHz     = 20.0
+	OscFreqMaxHz     = 5000.0
+)
+
+// ClampSourceLevel bounds a source level (dBFS) to the slider's travel.
+func ClampSourceLevel(db float64) float64 { return clampF(db, SourceLevelMinDB, SourceLevelMaxDB) }
+
+// ClampOscFreq bounds the test oscillator's frequency to the slider's travel.
+func ClampOscFreq(hz float64) float64 { return clampF(hz, OscFreqMinHz, OscFreqMaxHz) }
 
 // SetChannelSource builds and installs a source from a SourceState — shared
 // by scene recall and the live "change source" API.
 func (c *Console) SetChannelSource(ch *Channel, ss SourceState) error {
+	// Zero means "unset" for both fields (JSON omitempty) and each case
+	// below substitutes its own default, so only clamp values that are set.
+	if ss.LevelDB != 0 {
+		ss.LevelDB = ClampSourceLevel(ss.LevelDB)
+	}
+	if ss.FreqHz != 0 {
+		ss.FreqHz = ClampOscFreq(ss.FreqHz)
+	}
 	switch ss.Type {
 	case "osc":
 		freq, level := ss.FreqHz, ss.LevelDB
@@ -422,29 +506,44 @@ func (c *Console) SetChannelSource(ch *Channel, ss SourceState) error {
 	return nil
 }
 
-func (c *Console) applySource(ch *Channel, ss SourceState) {
+// applySource restores one channel's source; on failure the channel is
+// left silent and a user-facing warning is returned ("" on success).
+func (c *Console) applySource(ch *Channel, ss SourceState) string {
 	if err := c.SetChannelSource(ch, ss); err != nil {
 		logger.LogErr(err, "msg", "scene: source restore failed; channel left silent")
 		ch.SetSource(nil)
+		what := ss.Type
+		if ss.Path != "" {
+			what += " " + filepath.Base(ss.Path)
+		}
+		return ch.Name() + ": " + what + " could not be loaded; channel left silent"
 	}
+	return ""
 }
 
-func (c *Console) applyModules(ch *Channel, states []ModuleState) {
+// applyModules rebuilds one channel's insert chain, skipping (and
+// reporting) modules that can no longer be created.
+func (c *Console) applyModules(ch *Channel, states []ModuleState) (warnings []string) {
 	chain := make([]module.AudioModule, 0, len(states))
 	for _, ms := range states {
 		m, err := module.Create(ms.Name)
 		if err != nil {
 			logger.LogErr(err, "msg", "scene: module unavailable; skipping")
+			warnings = append(warnings, ch.Name()+": module "+ms.Name+" is not available; skipped")
 			continue
 		}
 		if err := m.Init(c.SampleRate, c.MaxBlock); err != nil {
 			logger.LogErr(err, "msg", "scene: module init failed; skipping", "module", ms.Name)
+			warnings = append(warnings, ch.Name()+": module "+ms.Name+" failed to initialize; skipped")
 			continue
 		}
 		for id, v := range ms.Params {
-			m.SetParam(id, v)
+			if err := SetModuleParam(m, id, v); err != nil {
+				logger.LogErr(err, "msg", "scene: module parameter skipped")
+			}
 		}
 		chain = append(chain, m)
 	}
 	ch.SetModules(chain)
+	return warnings
 }

@@ -35,7 +35,7 @@ func (cs ChannelStrip) Render(b *element.Builder) (x any) {
 	b.DivClass("strip", "data-strip", strconv.Itoa(id), "data-kind", "in").R(
 		b.DivClass("strip-head").R(
 			b.DivClass("strip-no").T(strconv.Itoa(id)),
-			b.DivClass("strip-name").T(ch.Name()),
+			b.DivClass("strip-name").T(esc(ch.Name())),
 		),
 
 		cs.renderSource(b),
@@ -220,11 +220,11 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 			b.Select("data-role", "sfont-bank", "data-id", id, "title", "SoundFont bank").R(
 				b.Wrap(func() {
 					for _, bank := range cs.Soundbanks {
-						attrs := []string{"value", bank}
+						attrs := []string{"value", esc(bank)}
 						if bank == sfontPath {
 							attrs = append(attrs, "selected", "selected")
 						}
-						b.Option(attrs...).T(sfontBaseName(bank))
+						b.Option(attrs...).T(esc(sfontBaseName(bank)))
 					}
 				}),
 			),
@@ -260,7 +260,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 						// Names come straight from the bank and already read as
 						// kit names ("Orchestra Kit", "Marching Snare"), so no
 						// " Kit" suffix is appended.
-						b.Option(attrs...).T(strconv.Itoa(kit.Prog) + " · " + kit.Name)
+						b.Option(attrs...).T(strconv.Itoa(kit.Prog) + " · " + esc(kit.Name))
 					}
 				}),
 			),
@@ -273,22 +273,22 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 			b.Select("data-role", "midi-bank", "data-id", id, "title", "SoundFont bank").R(
 				b.Wrap(func() {
 					for _, bank := range cs.Soundbanks {
-						attrs := []string{"value", bank}
+						attrs := []string{"value", esc(bank)}
 						if bank == midiBank {
 							attrs = append(attrs, "selected", "selected")
 						}
-						b.Option(attrs...).T(sfontBaseName(bank))
+						b.Option(attrs...).T(esc(sfontBaseName(bank)))
 					}
 				}),
 			),
 			b.Select("data-role", "midi-file", "data-id", id, "title", "MIDI song").R(
 				b.Wrap(func() {
 					for _, mf := range cs.MidiFiles {
-						attrs := []string{"value", mf}
+						attrs := []string{"value", esc(mf)}
 						if mf == midiPath {
 							attrs = append(attrs, "selected", "selected")
 						}
-						b.Option(attrs...).T(sfontBaseName(mf))
+						b.Option(attrs...).T(esc(sfontBaseName(mf)))
 					}
 				}),
 			),
@@ -306,7 +306,7 @@ func (cs ChannelStrip) renderSource(b *element.Builder) (x any) {
 		),
 		b.DivClass("src-wav", "data-id", id).R(
 			b.Input("type", "text", "placeholder", "path/to/file.wav",
-				"data-role", "wav-path", "data-id", id, "value", wavPath).R(),
+				"data-role", "wav-path", "data-id", id, "value", esc(wavPath)).R(),
 			b.Button("data-role", "wav-load", "data-id", id).T("Load"),
 		),
 	)
@@ -326,7 +326,7 @@ func (cs ChannelStrip) renderModules(b *element.Builder) (x any) {
 				idxStr := strconv.Itoa(idx)
 				b.DivClass("mod").R(
 					b.DivClass("mod-head").R(
-						b.Span().T(m.Name()),
+						b.Span().T(esc(m.Name())),
 						b.ButtonClass("mod-remove", "data-role", "mod-remove",
 							"data-id", id, "data-idx", idxStr).T("×"),
 					),
@@ -373,7 +373,7 @@ func modSlider(b *element.Builder, chID, modIdx int, spec module.ParamSpec, valu
 		"data-target", "mod",
 		"data-id", strconv.Itoa(chID),
 		"data-idx", strconv.Itoa(modIdx),
-		"data-param", spec.ID,
+		"data-param", esc(spec.ID),
 	}
 	if scale == "log" {
 		pos := logPos(value, spec.Min, spec.Max)
@@ -392,7 +392,7 @@ func modSlider(b *element.Builder, chID, modIdx int, spec module.ParamSpec, valu
 		)
 	}
 	b.DivClass("ctl").R(
-		b.Label().T(spec.Name),
+		b.Label().T(esc(spec.Name)),
 		b.Input(attrs...).R(),
 		b.SpanClass("readout").T(readoutText(value, spec.ID)),
 	)

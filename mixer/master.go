@@ -1,6 +1,8 @@
 package mixer
 
 import (
+	"sync/atomic"
+
 	"github.com/rohanthewiz/go-daw/dsp"
 )
 
@@ -17,6 +19,10 @@ type Master struct {
 
 	L, R     []float32
 	lastGain float64
+
+	// faults counts blocks silenced by the non-finite guard in
+	// ProcessBlock (audio thread writes, meter loop reads).
+	faults atomic.Uint64
 }
 
 // NewMaster builds the master bus with its safety limiter engaged.
@@ -52,7 +58,26 @@ func (m *Master) ProcessBlock(n int) (l, r []float32) {
 	}
 	m.lastGain = target
 
+	// Last line of defense in front of the limiter. Channels contain their
+	// own faults, so reaching here takes a bus sum overflowing float32 —
+	// unlikely, but the cost of missing it is the limiter's envelope going
+	// NaN and the console staying silent until restart. One scan per block.
+	if dsp.NonFinite(l, r) {
+		for i := range l {
+			l[i], r[i] = 0, 0
+		}
+		m.Limiter.Reset()
+		if !dsp.Finite(m.lastGain) {
+			m.lastGain = 0
+		}
+		m.faults.Add(1)
+	}
+
 	m.Limiter.ProcessBlock(l, r)
 	m.Meter.StoreBlock(l, r)
 	return l, r
 }
+
+// Faults returns how many master blocks had to be silenced because the bus
+// sum went non-finite. Safe from any goroutine.
+func (m *Master) Faults() uint64 { return m.faults.Load() }

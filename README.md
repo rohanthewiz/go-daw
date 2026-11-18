@@ -173,6 +173,15 @@ a block through each.
 - `Process(l, r []float32)` runs on the realtime audio thread: no
   allocation, locks, logging, or blocking. Exchange parameters through
   atomics (see `dsp.ParamCell`).
+- The host clamps every `SetParam` value to your `ParamSpec` Min/Max and
+  rejects unknown IDs (`mixer.SetModuleParam`), so declare honest ranges:
+  they are enforced, not just slider hints.
+- A panic inside `Process` is contained: the block is silenced, the module
+  is bypassed until it is removed or the chain is replaced, and the strip
+  shows a red fault rail. It no longer takes the process down, but it is
+  still a bug.
+- Plugins share the `dsp` and `module` packages with the host, so *any*
+  change to those packages (not only go.mod) requires rebuilding every `.so`.
 
 ## Architecture notes
 
@@ -184,8 +193,22 @@ a block through each.
 - **Signal flow**: source → gain → gate → HPF → LPF → EQ×3 → comp →
   modules → reverb → pan → (group | master) → limiter → output, with
   per-block linear ramps on gain/pan to prevent zipper noise.
+- **Fault containment**: each strip scans its output for NaN/±Inf once per
+  block. A bad sample (corrupt float WAV, misbehaving plugin) silences that
+  strip for the block and resets its filters, dynamics and reverb, instead
+  of latching into recursive DSP state and, via the master limiter,
+  silencing the whole console. The master bus has the same guard. Faults
+  are counted, logged once per episode, and shown as a red strip rail.
 - **Recording** taps the master bus into a lock-free SPSC ring; a drain
-  goroutine owns all disk I/O and finalizes the WAV header on stop.
+  goroutine owns all disk I/O. The WAV header is checkpointed about once a
+  second, so a crash leaves a playable file missing at most the last
+  second. Takes never overwrite each other (exclusive create, `-2` suffix
+  on a same-second collision), dropped blocks and write errors are
+  reported in the UI, and a take stops cleanly at the 4 GiB WAV limit.
+- **Input validation at the edges**: strip, source and module parameters
+  are clamped server-side (live API and scene recall alike), WAV headers
+  are validated before decoding, a recover middleware turns a handler
+  panic into a 500, and cross-origin POSTs are refused.
 - **Scenes** are single JSON documents in one bytdb table (no FKs); save is
   an upsert, recall applies through the same atomic cells the UI uses.
 
@@ -209,7 +232,10 @@ plugins/src/  example external plugins (flanger, bass_xpander, cross_fader)
 ```bash
 go test ./...        # DSP sanity (EQ gain, compressor, gate, reverb), polysynth,
                      # scene round-trip, tutorial and tour catalog invariants,
-                     # console readout formats (server/client must agree)
+                     # console readout formats (server/client must agree),
+                     # fault containment, mute ramps, scene clamping, module
+                     # panic bypass, malformed WAVs, recorder crash safety
+go test -race ./mixer ./record   # the lock-free paths (module chain CAS, ring)
 ```
 
 Smoke-test programs (engine tone, plugin load, recording) are archived in

@@ -80,8 +80,17 @@ func (f *Flanger) Process(l, r []float32) {
 		lfo := 0.5 + 0.5*math.Sin(2*math.Pi*f.phase)
 		delay := minD + (maxD-minD)*lfo
 		idx := float64(f.w) - delay
-		for idx < 0 {
+		// One wrap suffices: delay never exceeds maxD < len(buf) for any
+		// depth in the declared 0..1 range. This used to be a `for idx < 0`
+		// loop, which never terminates once delay is huge enough that adding
+		// the buffer length no longer changes it (depth=1e20) — a hang on
+		// the audio thread. The host now clamps params to their spec, and
+		// the range guard below keeps an out-of-spec value to a glitch.
+		if idx < 0 {
 			idx += float64(len(f.bufL))
+		}
+		if !(idx >= 0 && idx < float64(len(f.bufL))) { // also catches NaN
+			idx = 0
 		}
 		i0 := int(idx)
 		frac := float32(idx - float64(i0))

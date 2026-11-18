@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 	"os"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/rohanthewiz/serr"
@@ -23,6 +24,22 @@ type WavSource struct {
 // LoadWav decodes a PCM WAV (16/24-bit int or 32-bit float, mono or stereo)
 // and linearly resamples it to engineRate if needed.
 func LoadWav(path string, engineRate float64) (*WavSource, error) {
+	// Stat before reading: os.ReadFile on a device or FIFO (/dev/zero, a
+	// named pipe) never returns and grows memory until the process dies, and
+	// an enormous file would do the same more slowly. Paths arrive from the
+	// UI and from stored scenes, so neither case can be ruled out upstream.
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, serr.Wrap(err, "path", path)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, serr.New("not a regular file", "path", path)
+	}
+	if info.Size() > maxWavFileBytes {
+		return nil, serr.New("WAV file too large to load into memory", "path", path,
+			"bytes", strconv.FormatInt(info.Size(), 10))
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, serr.Wrap(err, "path", path)
@@ -37,6 +54,14 @@ func LoadWav(path string, engineRate float64) (*WavSource, error) {
 		l = resampleLinear(l, fileRate, engineRate)
 		r = resampleLinear(r, fileRate, engineRate)
 	}
+	// A zero-length source is not just silent, it is dangerous: a looping
+	// Read over an empty buffer can make no progress (see Read). Reject it
+	// here so the caller gets an error instead of a dead channel. This
+	// covers a data chunk of size 0 — e.g. a bounce whose header was never
+	// finalized — and a tiny file resampled down to nothing.
+	if len(l) == 0 {
+		return nil, serr.New("WAV file contains no audio frames", "path", path)
+	}
 
 	ws := &WavSource{path: path, l: l, r: r}
 	ws.Loop.Store(true) // mixer sources default to looping; a one-shot that ends leaves a dead channel
@@ -45,6 +70,12 @@ func LoadWav(path string, engineRate float64) (*WavSource, error) {
 
 // Read copies the next block; loops or goes silent at EOF. Audio thread.
 func (w *WavSource) Read(l, r []float32) int {
+	// LoadWav rejects empty files, but this loop must never be able to spin
+	// on the audio thread: with no frames and Loop on, each pass would
+	// rewind to 0 and copy nothing, forever.
+	if len(w.l) == 0 {
+		return 0
+	}
 	n := 0
 	for n < len(l) {
 		if w.pos >= len(w.l) {
@@ -71,6 +102,17 @@ func (w *WavSource) Name() string { return "wav:" + w.path }
 // Rewind restarts playback from the top (control plane; a mid-block reset
 // race just replays a few samples, which is harmless).
 func (w *WavSource) Rewind() { w.pos = 0 }
+
+// Load-time limits. maxWavFileBytes bounds the in-memory decode (decoded
+// float32 stereo is ~2-4x the 16-bit file size); 2 GiB covers hours of
+// stems. The rate window spans every real-world WAV (8 kHz telephony to
+// 768 kHz DXD-and-beyond) while excluding the 0 and absurd values that
+// would break the resampler.
+const (
+	maxWavFileBytes = 2 << 30
+	minWavRate      = 1000
+	maxWavRate      = 768000
+)
 
 // decodeWav walks RIFF chunks and converts the data chunk to stereo float32.
 // Only the chunks we need are parsed; unknown chunks are skipped by size,
@@ -103,6 +145,15 @@ func decodeWav(data []byte) (l, r []float32, sampleRate float64, err error) {
 			numChannels = int(binary.LittleEndian.Uint16(data[body+2 : body+4]))
 			sampleRate = float64(binary.LittleEndian.Uint32(data[body+4 : body+8]))
 			bitsPerSample = int(binary.LittleEndian.Uint16(data[body+14 : body+16]))
+			// WAVE_FORMAT_EXTENSIBLE carries the real format in the first two
+			// bytes of its SubFormat GUID (fmt offset 24), which are the same
+			// codes as the plain header (1 = PCM, 3 = float). Resolving it
+			// here matters for 32-bit files: ffmpeg and most DAWs write any
+			// >16-bit integer PCM as EXTENSIBLE, and reading those integer
+			// samples as IEEE floats yields garbage, including Inf/NaN.
+			if audioFormat == 0xFFFE && chunkSize >= 26 {
+				audioFormat = int(binary.LittleEndian.Uint16(data[body+24 : body+26]))
+			}
 		case "data":
 			raw = data[body : body+chunkSize]
 		}
@@ -121,11 +172,29 @@ func decodeWav(data []byte) (l, r []float32, sampleRate float64, err error) {
 		return nil, nil, 0, serr.New("unsupported channel count", "channels", string(rune('0'+numChannels)))
 	}
 
-	// WAVE_FORMAT_EXTENSIBLE (0xFFFE) wraps PCM/float; we treat it by bit
-	// depth like the plain formats, which covers the common cases.
+	// WAVE_FORMAT_EXTENSIBLE (0xFFFE) was resolved to its SubFormat while
+	// parsing fmt; one still reading 0xFFFE had a truncated extension and is
+	// treated by bit depth as before (32-bit → float), the common case.
 	const fmtPCM, fmtFloat, fmtExtensible = 1, 3, 0xFFFE
 	if audioFormat != fmtPCM && audioFormat != fmtFloat && audioFormat != fmtExtensible {
 		return nil, nil, 0, serr.New("unsupported WAV format code")
+	}
+	// Validate everything the decode divides or allocates by before using
+	// it. A header with bitsPerSample < 8 made bytesPerSample 0 (an integer
+	// divide-by-zero panic), and a sample rate of 0 made the resampler
+	// allocate int(+Inf) samples — both crash the whole process from an
+	// HTTP handler. 8-bit (unsigned) PCM was never decoded; it now gets a
+	// clear error rather than reaching the switch below.
+	switch bitsPerSample {
+	case 16, 24, 32:
+	default:
+		return nil, nil, 0, serr.New("unsupported bit depth (want 16, 24 or 32)", "bits", strconv.Itoa(bitsPerSample))
+	}
+	if audioFormat == fmtFloat && bitsPerSample != 32 {
+		return nil, nil, 0, serr.New("unsupported float WAV (only 32-bit float is decoded)", "bits", strconv.Itoa(bitsPerSample))
+	}
+	if sampleRate < minWavRate || sampleRate > maxWavRate {
+		return nil, nil, 0, serr.New("implausible WAV sample rate", "rate", strconv.Itoa(int(sampleRate)))
 	}
 
 	bytesPerSample := bitsPerSample / 8
@@ -148,6 +217,12 @@ func decodeWav(data []byte) (l, r []float32, sampleRate float64, err error) {
 			case 32:
 				if audioFormat == fmtFloat || audioFormat == fmtExtensible {
 					v = math.Float32frombits(binary.LittleEndian.Uint32(raw[off:]))
+					// Float files can legally hold Inf/NaN, and one such
+					// sample would fault the strip on every pass of the
+					// loop. Decode it as silence instead.
+					if v-v != 0 {
+						v = 0
+					}
 				} else {
 					v = float32(int32(binary.LittleEndian.Uint32(raw[off:]))) / 2147483648
 				}

@@ -76,7 +76,7 @@ func (t TransportBar) Render(b *element.Builder) (x any) {
 				b.Wrap(func() {
 					b.Option("value", "").T("scenes…")
 					for _, s := range t.Scenes {
-						b.Option("value", s.Name).T(s.Name)
+						b.Option("value", esc(s.Name)).T(esc(s.Name))
 					}
 				}),
 			),

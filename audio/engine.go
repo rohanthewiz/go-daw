@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"os"
 	"sync/atomic"
 
 	"github.com/gen2brain/malgo"
@@ -151,6 +152,13 @@ func (e *Engine) teardownContext() {
 }
 
 // StartRecording arms the master-bus tap.
+//
+// The install is a compare-and-swap, not check-then-store: two starts can
+// genuinely overlap (two tabs, or a count-in finishing as the player
+// shift-clicks), and with a plain Store the second recorder silently
+// replaced the first, orphaning its drain goroutine and leaving its file
+// with an unpatched header. The early Load is only a fast path that avoids
+// creating a file just to throw it away.
 func (e *Engine) StartRecording() (*record.Recorder, error) {
 	if e.recorder.Load() != nil {
 		return nil, serr.New("already recording")
@@ -159,7 +167,12 @@ func (e *Engine) StartRecording() (*record.Recorder, error) {
 	if err != nil {
 		return nil, serr.Wrap(err)
 	}
-	e.recorder.Store(rec)
+	if !e.recorder.CompareAndSwap(nil, rec) {
+		// Lost the race: finalize and delete the empty take we just made.
+		path, _ := rec.Stop()
+		_ = os.Remove(path)
+		return nil, serr.New("already recording")
+	}
 	return rec, nil
 }
 

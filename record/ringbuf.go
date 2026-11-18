@@ -36,19 +36,22 @@ func newF32Ring(minCapacity int) *f32Ring {
 	}
 }
 
-// Push appends samples; drops the whole slice if it doesn't fit (audio thread).
-func (rb *f32Ring) Push(p []float32) {
+// Push appends samples; drops the whole slice if it doesn't fit (audio
+// thread). Reports whether the samples were accepted, so the recorder can
+// keep its duration honest.
+func (rb *f32Ring) Push(p []float32) bool {
 	w := rb.w.Load()
 	r := rb.r.Load()
 	if int(w-r)+len(p) > len(rb.buf) {
 		rb.overruns.Add(1)
-		return
+		return false
 	}
 	for _, s := range p {
 		rb.buf[w&rb.mask] = s
 		w++
 	}
 	rb.w.Store(w) // publish after the data is in place
+	return true
 }
 
 // Pop fills p with up to len(p) samples, returning how many were read

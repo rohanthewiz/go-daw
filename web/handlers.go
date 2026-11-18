@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/rohanthewiz/go-daw/audio/source"
 	"github.com/rohanthewiz/go-daw/mixer"
@@ -190,7 +192,9 @@ func (srv *Server) channelParamHandler(ctx rweb.Context) error {
 }
 
 // sourceParamHandler adjusts live parameters of the current source (today:
-// the oscillator's freq/level) without rebuilding it.
+// the oscillator's freq/level) without rebuilding it. Levels and frequency
+// are clamped (mixer.ClampSourceLevel/ClampOscFreq): a level of +1000 dB
+// is 1e50 linear, which overflows float32 to Inf on the first sample.
 func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 	ch, err := srv.channel(ctx)
 	if err != nil {
@@ -204,23 +208,23 @@ func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 	case *source.Oscillator:
 		switch req.Name {
 		case "osc.freq":
-			src.FreqHz.Set(req.Value)
+			src.FreqHz.Set(mixer.ClampOscFreq(req.Value))
 		case "osc.level":
-			src.LevelDB.Set(req.Value)
+			src.LevelDB.Set(mixer.ClampSourceLevel(req.Value))
 		default:
 			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
 		}
 	case *source.PolySynth:
 		switch req.Name {
 		case "synth.level":
-			src.LevelDB.Set(req.Value)
+			src.LevelDB.Set(mixer.ClampSourceLevel(req.Value))
 		default:
 			return fail(ctx, serr.New("unknown source parameter", "param", req.Name), 400)
 		}
 	case *source.SFSynth:
 		switch req.Name {
 		case "sfont.level":
-			src.LevelDB.Set(req.Value)
+			src.LevelDB.Set(mixer.ClampSourceLevel(req.Value))
 		case "sfont.program":
 			// Program changes are live (queued through the synth's event ring),
 			// so switching instruments never rebuilds the source or drops notes.
@@ -239,7 +243,7 @@ func (srv *Server) sourceParamHandler(ctx rweb.Context) error {
 	case *source.MidiPlayer:
 		switch req.Name {
 		case "midi.level":
-			src.LevelDB.Set(req.Value)
+			src.LevelDB.Set(mixer.ClampSourceLevel(req.Value))
 		case "midi.loop":
 			// Control-plane atomic latched by the audio thread at play time;
 			// mid-song toggles apply on the next play (sequencer limitation).
@@ -455,7 +459,12 @@ func (srv *Server) moduleParamHandler(ctx rweb.Context) error {
 	if req.Index < 0 || req.Index >= len(mods) {
 		return fail(ctx, serr.New("module index out of range"), 400)
 	}
-	mods[req.Index].SetParam(req.ID, req.Value)
+	// Clamped to the module's declared range (and unknown IDs rejected):
+	// see mixer.SetModuleParam for the values that otherwise hang or
+	// poison the audio thread.
+	if err := mixer.SetModuleParam(mods[req.Index], req.ID, req.Value); err != nil {
+		return fail(ctx, err, 400)
+	}
 	return ok(ctx)
 }
 
@@ -504,10 +513,37 @@ type sceneReq struct {
 	Name string `json:"name"`
 }
 
+// maxSceneNameRunes bounds scene names: they are shown in a dropdown and
+// stored as a primary key, and nothing about a mix needs a paragraph.
+const maxSceneNameRunes = 64
+
+// cleanSceneName trims a scene name and rejects ones that are empty, too
+// long, or contain control characters (which render invisibly in the
+// picker and make two scenes look identical). Only applied on save, so
+// scenes saved before this check can still be recalled and deleted.
+func cleanSceneName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", serr.New("scene name required")
+	}
+	if utf8.RuneCountInString(name) > maxSceneNameRunes {
+		return "", serr.New("scene name too long", "max", strconv.Itoa(maxSceneNameRunes))
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", serr.New("scene name contains control characters")
+		}
+	}
+	return name, nil
+}
+
 func (srv *Server) sceneSaveHandler(ctx rweb.Context) error {
 	req, err := decodeBody[sceneReq](ctx)
-	if err != nil || req.Name == "" {
+	if err != nil {
 		return fail(ctx, serr.New("scene name required"), 400)
+	}
+	if req.Name, err = cleanSceneName(req.Name); err != nil {
+		return fail(ctx, err, 400)
 	}
 	blob, err := json.Marshal(srv.engine.Console.Snapshot())
 	if err != nil {
@@ -533,11 +569,15 @@ func (srv *Server) sceneRecallHandler(ctx rweb.Context) error {
 	if err := json.Unmarshal(blob, &scene); err != nil {
 		return fail(ctx, serr.Wrap(err, "scene", req.Name), 500)
 	}
-	if err := srv.engine.Console.ApplyScene(scene); err != nil {
+	warnings, err := srv.engine.Console.ApplySceneReport(scene)
+	if err != nil {
 		return fail(ctx, err, 500)
 	}
 	logger.Info("Scene recalled", "name", req.Name)
-	return ok(ctx)
+	// warnings lists what could not be restored (missing files, unloaded
+	// plugins); the client shows them after the reload rather than leaving
+	// a silent channel unexplained.
+	return ctx.WriteJSON(map[string]any{"ok": true, "warnings": warnings})
 }
 
 func (srv *Server) sceneDeleteHandler(ctx rweb.Context) error {
@@ -568,12 +608,26 @@ func (srv *Server) recordStartHandler(ctx rweb.Context) error {
 	return ok(ctx)
 }
 
+// recordStopHandler finalizes the take and reports what was actually
+// captured: the path (so the UI can say where it went), the duration in the
+// file, and — when non-zero/nil — dropped blocks and the write error that
+// cut the take short, so a damaged take is announced, not discovered later.
 func (srv *Server) recordStopHandler(ctx rweb.Context) error {
+	rec := srv.engine.Recorder()
 	path, seconds, err := srv.engine.StopRecording()
 	if err != nil {
 		return fail(ctx, err, 409)
 	}
-	return ctx.WriteJSON(map[string]any{"path": path, "seconds": seconds})
+	resp := map[string]any{"path": path, "seconds": seconds}
+	if rec != nil {
+		if d := rec.Dropped(); d > 0 {
+			resp["dropped"] = d
+		}
+		if werr := rec.Err(); werr != nil {
+			resp["error"] = werr.Error()
+		}
+	}
+	return ctx.WriteJSON(resp)
 }
 
 // ---- tutorial progress ----

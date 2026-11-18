@@ -4,6 +4,7 @@ package web
 
 import (
 	_ "embed"
+	"strconv"
 	"time"
 
 	"github.com/rohanthewiz/go-daw/audio"
@@ -47,13 +48,21 @@ func Start(cfg *config.Config, engine *audio.Engine, st *store.Store) error {
 		store:  st,
 		css:    css,
 		hub: rweb.NewSSEHub(rweb.SSEHubOptions{
-			ChannelSize:       32,
+			ChannelSize: 32,
+			// Passing an options struct leaves MaxDropped at its zero value,
+			// which *disables* eviction (the documented default of 3 only
+			// applies without options). A stalled tab would then stay
+			// registered forever. 25 consecutive drops ≈ 2 s of meter frames
+			// on top of the 32-frame buffer: only a truly stuck client trips it.
+			MaxDropped:        25,
 			HeartbeatInterval: 15 * time.Second,
 		}),
 	}
 
 	s := rweb.NewServer(rweb.ServerOptions{Address: cfg.HTTPAddr, Verbose: false})
-	s.Use(rweb.RequestInfo)
+	// recoverPanics first so it wraps everything after it, including the
+	// origin check and request logging.
+	s.Use(recoverPanics, sameOriginWrites, rweb.RequestInfo)
 
 	// Pages & assets
 	s.Get("/", srv.pageHandler)
@@ -116,11 +125,51 @@ func (srv *Server) meterLoop() {
 		Pos   float64 `json:"pos"`
 		Len   float64 `json:"len"`
 	}
+	// levels builds one meter entry with every value forced finite.
+	// encoding/json refuses NaN/±Inf, and one bad float fails the whole
+	// frame, freezing meters, record clock and MIDI readouts in every tab.
+	// The strips contain their own faults, so this should never trigger; it
+	// keeps the UI stream alive even if something upstream slips through.
+	levels := func(pl, rl, pr, rr float32) sideLevels {
+		fin := func(v float32) float32 {
+			if v-v != 0 {
+				return 0
+			}
+			return v
+		}
+		return sideLevels{fin(pl), fin(rl), fin(pr), fin(rr)}
+	}
+
 	tick := time.NewTicker(80 * time.Millisecond)
 	defer tick.Stop()
 
+	con := srv.engine.Console
+	// lastFaults/faultsRising implement edge-triggered fault logging: a
+	// plugin that emits NaN every block would otherwise log 12 lines a
+	// second. One line when a strip starts faulting; it re-arms after a
+	// quiet tick.
+	lastFaults := make([]uint64, len(con.Channels))
+	faultsRising := make([]bool, len(con.Channels))
+
 	for range tick.C {
-		con := srv.engine.Console
+		anyFaults := false
+		for i, ch := range con.Channels {
+			f := ch.Faults()
+			rising := f > lastFaults[i]
+			if rising && !faultsRising[i] {
+				logger.LogErr(serr.New("channel produced non-finite audio or a module panicked; strip silenced and reset",
+					"channel", strconv.Itoa(ch.ID), "faultBlocks", strconv.FormatUint(f, 10)))
+			}
+			faultsRising[i] = rising
+			lastFaults[i] = f
+			anyFaults = anyFaults || f > 0
+		}
+
+		// No tab is listening: skip building and encoding a frame nobody
+		// will read. (The fault check above still runs, so logs stay live.)
+		if srv.hub.ClientCount() == 0 {
+			continue
+		}
 
 		payload := struct {
 			Ch         []sideLevels `json:"ch"`
@@ -129,12 +178,26 @@ func (srv *Server) meterLoop() {
 			Midi       []*midiInfo  `json:"midi,omitempty"`
 			Recording  bool         `json:"recording"`
 			RecSeconds float64      `json:"recSeconds"`
+			// RecDropped counts blocks the take lost because the disk fell
+			// behind; RecError is set once a write has failed and nothing
+			// more is reaching the file. Both omitted while healthy.
+			RecDropped uint64 `json:"recDropped,omitempty"`
+			RecError   string `json:"recError,omitempty"`
+			// Faults is per-channel (aligned with Ch): blocks silenced by
+			// the strip's non-finite guard or a panicking insert. Omitted
+			// entirely while every strip is clean, like Midi.
+			Faults       []uint64 `json:"faults,omitempty"`
+			MasterFaults uint64   `json:"masterFaults,omitempty"`
 		}{}
+
+		if anyFaults {
+			payload.Faults = append([]uint64(nil), lastFaults...)
+		}
+		payload.MasterFaults = con.Master.Faults()
 
 		anyMidi := false
 		for _, ch := range con.Channels {
-			pl, rl, pr, rr := ch.Meter.Levels()
-			payload.Ch = append(payload.Ch, sideLevels{pl, rl, pr, rr})
+			payload.Ch = append(payload.Ch, levels(ch.Meter.Levels()))
 
 			// Positionally aligned with Ch; nil for channels without a player,
 			// so the JSON stays tiny when the feature is idle.
@@ -149,15 +212,17 @@ func (srv *Server) meterLoop() {
 			payload.Midi = nil
 		}
 		for _, g := range con.Groups {
-			pl, rl, pr, rr := g.Meter.Levels()
-			payload.Grp = append(payload.Grp, sideLevels{pl, rl, pr, rr})
+			payload.Grp = append(payload.Grp, levels(g.Meter.Levels()))
 		}
-		pl, rl, pr, rr := con.Master.Meter.Levels()
-		payload.Master = sideLevels{pl, rl, pr, rr}
+		payload.Master = levels(con.Master.Meter.Levels())
 
 		if rec := srv.engine.Recorder(); rec != nil {
 			payload.Recording = true
 			payload.RecSeconds = rec.Seconds()
+			payload.RecDropped = rec.Dropped()
+			if err := rec.Err(); err != nil {
+				payload.RecError = err.Error()
+			}
 		}
 
 		srv.hub.BroadcastAny("meters", payload)

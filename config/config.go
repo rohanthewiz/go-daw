@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
+	"strconv"
 
 	"github.com/rohanthewiz/logger"
 	"github.com/rohanthewiz/serr"
@@ -98,6 +99,19 @@ func Load() (*Config, error) {
 	}
 	if cfg.GroupCount < 0 || cfg.GroupCount > 16 {
 		return nil, serr.New("group count out of range 0..16")
+	}
+	// Every DSP block is sized and tuned from the sample rate at
+	// construction, so a bad value fails late and badly: 0 Hz gives the
+	// reverb zero-length comb buffers (index panic the moment reverb is
+	// enabled) and biquads NaN coefficients (ω = 0/0), while miniaudio
+	// happily opens the device at its native rate. Reject it at startup.
+	if cfg.SampleRate < 8000 || cfg.SampleRate > 192000 {
+		return nil, serr.New("sample rate out of range 8000..192000", "sampleRate", strconv.Itoa(cfg.SampleRate))
+	}
+	// The engine's scratch buffers hold 4096 frames (audio.maxBlock) and it
+	// sub-chunks larger device periods, so this only bounds the request.
+	if cfg.BlockSize < 16 || cfg.BlockSize > 4096 {
+		return nil, serr.New("block size out of range 16..4096", "blockSize", strconv.Itoa(cfg.BlockSize))
 	}
 
 	return &cfg, nil

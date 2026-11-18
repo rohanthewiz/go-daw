@@ -168,6 +168,40 @@ func TestMidiPlayerLoop(t *testing.T) {
 	}
 }
 
+// TestMidiPlayerLoopToggleMidSong: the sequencer latches the loop flag at
+// Play, so a mid-song toggle must not change what the running song does.
+// Before the latch, loop-off after a few passes stopped the song instantly
+// (its frame count was already past the length), and loop-on mid-song left
+// the transport "playing" over silence forever.
+func TestMidiPlayerLoopToggleMidSong(t *testing.T) {
+	l, r := make([]float32, 256), make([]float32, 256)
+
+	// Looping song, loop turned off after several passes: keeps playing.
+	p := testMidiPlayer(t)
+	p.SetLoop(true)
+	p.Play()
+	for range 560 { // ~3 s: six passes, frame count well past length+tail
+		p.Read(l, r)
+	}
+	p.SetLoop(false)
+	p.Read(l, r)
+	if p.PlayState() != "playing" {
+		t.Fatalf("loop-off mid-song: PlayState = %q, want still playing until the next Play", p.PlayState())
+	}
+
+	// One-shot song, loop turned on mid-song: still auto-stops on schedule.
+	q := testMidiPlayer(t)
+	q.Play()
+	q.Read(l, r)
+	q.SetLoop(true)
+	for range 520 {
+		q.Read(l, r)
+	}
+	if q.PlayState() != "stopped" {
+		t.Fatalf("loop-on mid-song: PlayState = %q, want auto-stopped (sequencer is not looping)", q.PlayState())
+	}
+}
+
 // TestMidiPlayerReadNoAllocs enforces the realtime contract across the drain
 // and sequencer render paths, transport events included — the same guarantee
 // TestSFSynthReadNoAllocs gives the live-note path.

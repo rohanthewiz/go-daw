@@ -2,6 +2,7 @@ package dsp
 
 import (
 	"math"
+	"sync"
 	"sync/atomic"
 )
 
@@ -50,6 +51,14 @@ type Biquad struct {
 
 	coeffs atomic.Pointer[BiquadCoeffs]
 
+	// updateMu serializes Update calls (control plane only — the audio
+	// thread never takes it; it only loads coeffs). Two overlapping updates
+	// (a gain drag racing a scene recall) could otherwise each read a mix of
+	// old and new cell values, and the slower one would publish coefficients
+	// that match neither — leaving the filter out of step with its displayed
+	// settings until the next change.
+	updateMu sync.Mutex
+
 	// Per-side filter state. One Biquad instance processes one L/R pair;
 	// each side needs independent state, but they share the same response.
 	z1L, z2L float64
@@ -86,6 +95,9 @@ func NewBiquad(kind FilterKind, sampleRate, freq, gainDB, q float64, enabled boo
 //	LPF:  b0=b2=(1-cosω)/2  b1=1-cosω   a0=1+α  a1=-2cosω  a2=1-α
 //	HPF:  b0=b2=(1+cosω)/2  b1=-(1+cosω) (same a's)
 func (b *Biquad) Update() {
+	b.updateMu.Lock()
+	defer b.updateMu.Unlock()
+
 	freq := b.Freq.Get()
 	// Clamp to a safe range: ω must stay in (0, π) or the filter goes unstable.
 	nyquist := b.sampleRate * 0.499
@@ -134,6 +146,14 @@ func (b *Biquad) Update() {
 		B0: b0 * inv, B1: b1 * inv, B2: b2 * inv,
 		A1: a1 * inv, A2: a2 * inv,
 	})
+}
+
+// Reset clears the filter's memory (both sides) without touching its
+// parameters. Audio thread only — the state fields are audio-thread-owned.
+// Used by the channel's fault recovery: a NaN in z1/z2 never decays out on
+// its own, so the only way back to sound is to zero the state.
+func (b *Biquad) Reset() {
+	b.z1L, b.z2L, b.z1R, b.z2R = 0, 0, 0, 0
 }
 
 // ProcessBlock filters both channels in place. Audio thread only.

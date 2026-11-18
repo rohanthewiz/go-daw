@@ -1114,3 +1114,50 @@ input.fader::-moz-range-thumb
   &[data-cur="1"]
     background gold
     border-color gold
+
+// ---- status toasts ----------------------------------------------------------
+// Feedback for things that happen out of the player's sight: a failed request
+// (which used to reach only the browser console), where a take was saved, what
+// a scene recall could not restore. Bottom-centre so it never covers the
+// transport or a fader under the mouse; pointer-events none so a toast can
+// never swallow a click on the control beneath it. Above the tour (z 101).
+#toasts
+  position fixed
+  left 50%
+  bottom 18px
+  transform translateX(-50%)
+  z-index 200
+  display flex
+  flex-direction column
+  align-items center
+  gap 6px
+  pointer-events none
+  max-width calc(100vw - 32px)
+
+.toast
+  font 700 12px/1.35 cond
+  letter-spacing 0.3px
+  color inkBright
+  background #1c1e23
+  border 1px solid edgeLit
+  border-left 4px solid blue
+  border-radius 3px
+  padding 7px 12px
+  box-shadow 0 4px 14px rgba(0, 0, 0, 0.6)
+  max-width 640px
+  overflow-wrap anywhere
+  &[data-kind="ok"]
+    border-left-color green
+  &[data-kind="warn"]
+    border-left-color amber
+  &[data-kind="error"]
+    border-left-color danger
+
+// A strip whose audio went non-finite (or whose insert panicked) has been
+// silenced and reset by the engine. Turning its rail red, with the reason in
+// the head's tooltip, points at the culprit instead of leaving a channel that
+// simply went quiet.
+.strip[data-fault="1"]
+  --rail danger
+  .strip-head
+    background linear-gradient(to bottom, #4a2226, #2a1517)

@@ -175,6 +175,26 @@ func (r *Reverb) ProcessBlock(l, ri []float32) {
 	}
 }
 
+// Reset silences the reverb: clears the pre-delay line, every comb and
+// allpass buffer, and the combs' damping state. Audio thread only. clear()
+// zeroes in place (~40k floats at 48 kHz), so it is allocation-free; it is
+// only called on fault recovery, never per block.
+func (r *Reverb) Reset() {
+	for side := range 2 {
+		clear(r.pre[side].buf)
+		r.pre[side].w = 0
+		for c := range r.combs[side] {
+			clear(r.combs[side][c].buf)
+			r.combs[side][c].idx = 0
+			r.combs[side][c].lp = 0
+		}
+		for a := range r.aps[side] {
+			clear(r.aps[side][a].buf)
+			r.aps[side][a].idx = 0
+		}
+	}
+}
+
 func clamp01(x float64) float64 {
 	return math.Min(1, math.Max(0, x))
 }

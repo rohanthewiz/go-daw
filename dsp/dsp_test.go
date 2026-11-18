@@ -178,3 +178,162 @@ func TestParamCellRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// referenceCompress is the compressor's gain law evaluated the slow way —
+// LinToDB and Pow on every sample, no below-knee shortcut — sharing the
+// envelope follower so only the gain computation differs.
+func referenceCompress(c *Compressor, l, r []float32) {
+	threshold, ratio := c.ThresholdDB.Get(), c.Ratio.Get()
+	knee, makeup := c.KneeDB.Get(), c.MakeupDB.Get()
+	slope := 1/ratio - 1
+	if ratio >= LimiterRatio {
+		slope = -1
+	}
+	for i := range l {
+		d := abs32(l[i])
+		if ar := abs32(r[i]); ar > d {
+			d = ar
+		}
+		df := float64(d)
+		if df > c.env {
+			c.env = df + c.aCoef*(c.env-df)
+		} else {
+			c.env = df + c.rCoef*(c.env-df)
+		}
+		over := LinToDB(c.env) - threshold
+		var grDB float64
+		switch {
+		case knee > 0 && 2*math.Abs(over) <= knee:
+			t := over + knee/2
+			grDB = slope * t * t / (2 * knee)
+		case over > 0:
+			grDB = slope * over
+		}
+		g := float32(math.Pow(10, (grDB+makeup)/20))
+		l[i] *= g
+		r[i] *= g
+	}
+}
+
+// TestCompressorFastPathMatchesReference: the below-knee shortcut must be a
+// pure optimization. A swept-amplitude sine crosses below, through, and above
+// the knee (soft and hard knee, with makeup gain); every output sample must
+// match the slow reference.
+func TestCompressorFastPathMatchesReference(t *testing.T) {
+	for _, knee := range []float64{0, 6} {
+		fast := NewCompressor(testRate)
+		ref := NewCompressor(testRate)
+		for _, c := range []*Compressor{fast, ref} {
+			c.Enabled.Store(true)
+			c.ThresholdDB.Set(-20)
+			c.Ratio.Set(4)
+			c.KneeDB.Set(knee)
+			c.MakeupDB.Set(3)
+		}
+
+		const n = 256
+		phase := 0.0
+		for block := range 200 {
+			// Amplitude sweeps 0.001 (-60 dBFS) → 1.0 (0 dBFS) over the run.
+			amp := 0.001 * math.Pow(1000, float64(block)/199)
+			l1, r1 := make([]float32, n), make([]float32, n)
+			phase = sineBlock(l1, r1, 220, amp, phase)
+			l2, r2 := append([]float32(nil), l1...), append([]float32(nil), r1...)
+
+			fast.ProcessBlock(l1, r1)
+			referenceCompress(ref, l2, r2)
+			for i := range l1 {
+				if d := math.Abs(float64(l1[i] - l2[i])); d > 1e-6 {
+					t.Fatalf("knee %v block %d sample %d: fast %v ref %v", knee, block, i, l1[i], l2[i])
+				}
+			}
+		}
+	}
+}
+
+// TestResetClearsLatchedNaN: a NaN that reaches a recursive processor's state
+// never decays out; Reset is the recovery path the channel strip relies on.
+func TestResetClearsLatchedNaN(t *testing.T) {
+	nan := float32(math.NaN())
+	bq := NewBiquad(FilterLowPass, testRate, 1000, 0, 0.707, true)
+	comp := NewCompressor(testRate)
+	comp.Enabled.Store(true)
+	rv := NewReverb(testRate)
+	rv.Enabled.Store(true)
+	gate := NewGate(testRate)
+	gate.Enabled.Store(true)
+
+	run := func(v float32) (l []float32) {
+		l, r := make([]float32, 64), make([]float32, 64)
+		for i := range l {
+			l[i], r[i] = v, v
+		}
+		gate.ProcessBlock(l, r)
+		bq.ProcessBlock(l, r)
+		comp.ProcessBlock(l, r)
+		rv.ProcessBlock(l, r)
+		return l
+	}
+	run(nan)
+	if l := run(0.1); !NonFinite(l, l) {
+		t.Fatal("expected NaN to latch before Reset (test premise)")
+	}
+	gate.Reset()
+	bq.Reset()
+	comp.Reset()
+	rv.Reset()
+	if l := run(0.1); NonFinite(l, l) {
+		t.Fatal("processors still emit NaN after Reset")
+	}
+}
+
+// TestNonFiniteAndFinite pins both helpers on each failure kind.
+func TestNonFiniteAndFinite(t *testing.T) {
+	ok := []float32{0, 1, -1, 1e-38, 3e38}
+	if NonFinite(ok, ok) {
+		t.Fatal("finite samples reported as non-finite")
+	}
+	for _, bad := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+		l := []float32{0, bad, 0}
+		r := []float32{0, 0, 0}
+		if !NonFinite(l, r) || !NonFinite(r, l) {
+			t.Fatalf("missed %v", bad)
+		}
+		if Finite(float64(bad)) {
+			t.Fatalf("Finite(%v) = true", bad)
+		}
+	}
+	if !Finite(0) || !Finite(-1e300) {
+		t.Fatal("Finite rejected a finite value")
+	}
+}
+
+// BenchmarkLimiterTypicalLevel measures the always-on master limiter on a
+// typical mix level (peaks around -12 dBFS, under its -0.3 dB ceiling),
+// where the below-knee fast path applies. Compare with
+// BenchmarkLimiterReference, the per-sample Log10+Pow gain law.
+func BenchmarkLimiterTypicalLevel(b *testing.B) {
+	c := NewLimiter(testRate)
+	srcL, srcR := make([]float32, 256), make([]float32, 256)
+	sineBlock(srcL, srcR, 220, 0.25, 0)
+	l, r := make([]float32, 256), make([]float32, 256)
+	b.ResetTimer()
+	for range b.N {
+		copy(l, srcL)
+		copy(r, srcR)
+		c.ProcessBlock(l, r)
+	}
+}
+
+func BenchmarkLimiterReference(b *testing.B) {
+	c := NewLimiter(testRate)
+	srcL, srcR := make([]float32, 256), make([]float32, 256)
+	sineBlock(srcL, srcR, 220, 0.25, 0)
+	l, r := make([]float32, 256), make([]float32, 256)
+	b.ResetTimer()
+	for range b.N {
+		copy(l, srcL)
+		copy(r, srcR)
+		referenceCompress(c, l, r)
+	}
+}
